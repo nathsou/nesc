@@ -1,0 +1,5 @@
+/**/*.nes
+nesc
+*.fdb
+.DS_Store
+*.dSYM
