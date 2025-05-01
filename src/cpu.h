@@ -7,6 +7,7 @@
 #include <memory.h>
 #include "types.h"
 #include "instructions.h"
+#include <stdlib.h>
 
 #define CPU_NMI_VECTOR 0xFFFA
 #define CPU_RESET_VECTOR 0xFFFC
@@ -15,8 +16,6 @@
 #define CPU_STACK_START 0x100
 #define CPU_FREQ 1789773 // 1.79 MHz
 #define CPU_CYCLES_PER_FRAME (CPU_FREQ / 60)
-
-extern u8 prg_rom[32 * 1024]; // 32KB
 
 // registers
 extern u8 a, x, y, sp;
@@ -43,7 +42,8 @@ u16 next_word(void);
 extern u8 controller1_state;
 void update_controller1(u8 state);
 
-void cpu_init(u8 *prg_rom);
+void cpu_init(u8 *prg_rom, usize prog_rom_size);
+void cpu_free(void);
 
 // addressing mode utils
 

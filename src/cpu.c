@@ -17,7 +17,8 @@ bool overflow_flag;
 bool brk_flag;
 bool interrupt_disable_flag;
 
-u8 prg[32 * 1024];
+u8* prg;
+usize prog_rom_size;
 u8 ram[2048];
 
 u8 controller1_state;
@@ -36,16 +37,13 @@ usize INST_CYCLES[] = {
     2, 6, 2, 8, 3, 3, 5, 5, 2, 2, 2, 2, 4, 4, 6, 6, 2, 5, 2, 8, 4, 4, 6, 6, 2, 4, 2, 7, 4, 4, 7, 7,
 };
 
-// const char* INST_OPCODES[] = {
-//     "BRK", 
-// };
-
 inline void update_controller1(u8 state) {
     controller1_state = state;
 }
 
-void cpu_init(u8 *prg_rom) {
-    memcpy(prg, prg_rom, 32 * 1024);
+void cpu_init(u8 *prg_rom, usize size) {
+    prg = prg_rom;
+    prog_rom_size = size;
 
     // registers
     a = 0;
@@ -68,6 +66,10 @@ void cpu_init(u8 *prg_rom) {
     controller1_btn_index = 0;
 
     cycles = 0;
+}
+
+void cpu_free(void) {
+    free(prg);
 }
 
 u8 read_byte(u16 addr) {

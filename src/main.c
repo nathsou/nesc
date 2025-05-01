@@ -63,6 +63,47 @@ void handle_inputs(int gamepad) {
     update_controller1(state);
 }
 
+typedef struct {
+    u8 prg_banks;
+    u8 chr_banks;
+    u8 mapper_type;
+    bool mirroring_x;
+    bool mirroring_y;
+    bool battery;
+    bool trainer;
+} INES;
+
+INES parse_ines_header(u8* header) {
+    // Check for iNES header
+    if (header[0] != 'N' || header[1] != 'E' || header[2] != 'S' || header[3] != 0x1A) {
+        printf("Invalid iNES header\n");
+        exit(1);
+    }
+
+    INES ines;
+
+    ines.prg_banks = header[4];
+    ines.chr_banks = header[5];
+
+    // Mapper type
+    ines.mapper_type = ((header[6] & 0xF0) >> 4) | (header[7] & 0xF0);
+    ines.mirroring_x = (header[6] & 0x01) != 0;
+    ines.mirroring_y = (header[6] & 0x02) != 0;
+    ines.battery = (header[6] & 0x04) != 0;
+    ines.trainer = (header[6] & 0x08) != 0;
+
+    return ines;
+}
+
+void print_ines(INES ines) {
+    printf("PRG banks: %d\n", ines.prg_banks);
+    printf("CHR banks: %d\n", ines.chr_banks);
+    printf("Mapper type: %d\n", ines.mapper_type);
+    printf("Mirroring: %s\n", ines.mirroring_x ? "Horizontal" : "Vertical");
+    printf("Battery: %s\n", ines.battery ? "Yes" : "No");
+    printf("Trainer: %s\n", ines.trainer ? "Yes" : "No");
+}
+
 void nes_init(void) {
     // load ROM
     FILE* rom_file = fopen(ROM_PATH, "rb");
@@ -75,23 +116,31 @@ void nes_init(void) {
     long rom_size = ftell(rom_file);
     fseek(rom_file, 0, SEEK_SET);
 
-    // skip iNES header
-    fseek(rom_file, INES_HEADER_SIZE, SEEK_SET);
+    // read INES header
+    u8 header[INES_HEADER_SIZE];
+    fread(header, 1, INES_HEADER_SIZE, rom_file);
+    INES ines = parse_ines_header(header);
+    print_ines(ines);
 
-    // read next 32KB into PRG ROM
-    usize prg_rom_size = 32 * 1024;
-    u8 prg_rom[prg_rom_size];
+    if (ines.trainer) {
+        // skip trainer data
+        fseek(rom_file, 512, SEEK_SET);
+    }
+
+    // read PRG ROM
+    usize prg_rom_size = ines.prg_banks * 16 * 1024;
+    u8* prg_rom = (u8*)malloc(prg_rom_size);
     fread(prg_rom, 1, prg_rom_size, rom_file);
 
-    // read next 8KB into CHR ROM
-    usize chr_rom_size = 8 * 1024;
-    u8 chr_rom[chr_rom_size];
+    // read CHR ROM
+    usize chr_rom_size = ines.chr_banks * 8 * 1024;
+    u8* chr_rom = (u8*)malloc(chr_rom_size);
     fread(chr_rom, 1, chr_rom_size, rom_file);
 
     fclose(rom_file);
 
     // initialize CPU, PPU and APU
-    cpu_init(prg_rom);
+    cpu_init(prg_rom, prg_rom_size);
     ppu_init(chr_rom);
     apu_init(AUDIO_SAMPLE_RATE);
 }

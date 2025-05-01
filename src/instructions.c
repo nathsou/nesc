@@ -806,17 +806,8 @@ inline void nop(void) {}
 
 // branch instructions
 
-// #define DETECT_INFINITE_LOOPS 1
-
 inline void jmp_abs(u16 addr) {
     pc = addr;
-
-#if DETECT_INFINITE_LOOPS
-    if (pc == addr) {
-        // stop unconditional infinite loop
-        cycles = CPU_CYCLES_PER_FRAME;
-    }
-#endif
 }
 
 void jmp_ind(u16 addr) {

@@ -6,7 +6,7 @@
 #define TILES_PER_ROW 32
 #define TILES_PER_COLUMN 30
 
-u8 chr_rom[8192];
+u8* chr_rom;
 u8 nametable[2048];
 u8 palette_table[32];
 u8 oam[256];
@@ -55,9 +55,12 @@ void clear_bg_mask(void) {
 }
 
 void ppu_init(u8* chr) {
-    // copy CHR ROM
-    memcpy(chr_rom, chr, 8192);
+    chr_rom = chr;
     clear_frame();
+}
+
+void ppu_free(void) {
+    free(chr_rom);
 }
 
 bool status_clear = false;
@@ -97,7 +100,7 @@ u8 ppu_read_register(u16 addr) {
 
 void ppu_transfer_oam(u16 start_addr) {
     memcpy(oam, ram + start_addr, 256);
-    cycles += 513 + (cycles & 1);
+    cycles += 513;
 }
 
 void ppu_write_register(u16 addr, u8 value) {

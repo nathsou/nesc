@@ -3,6 +3,7 @@
 
 #include "types.h"
 #include <string.h>
+#include <stdlib.h>
 
 #define SCREEN_WIDTH 256
 #define SCREEN_HEIGHT 240
@@ -22,7 +23,7 @@
 #define PPU_STATUS_SPRITE0_HIT 64
 #define PPU_STATUS_VBLANK 128
 
-extern u8 chr_rom[8192]; // 1 page of CHR ROM (8KB)
+extern u8* chr_rom; // 1 page of CHR ROM (8KB)
 extern u8 nametable[2048]; // 2KB of nametable RAM
 extern u8 palette_table[32]; // 32 bytes of palette RAM
 extern u8 oam[256]; // 256 bytes of OAM RAM

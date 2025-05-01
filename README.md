@@ -9,8 +9,6 @@ NES emulator in C ported from my work on [this Super Mario Bros static recompila
 - A: L
 - start: Enter
 - select: Space
-- z: Save state
-- x: Load state
 
 ## Building
 
