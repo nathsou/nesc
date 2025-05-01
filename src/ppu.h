@@ -50,6 +50,7 @@ void ppu_transfer_oam(u16 start_addr);
 extern u8 frame[SCREEN_WIDTH * SCREEN_HEIGHT * 3]; // 3 bytes per pixel (RGB)
 
 void ppu_init(u8* chr);
+void ppu_free(void);
 
 u8 ppu_read_register(u16 addr);
 void ppu_write_register(u16 addr, u8 value);

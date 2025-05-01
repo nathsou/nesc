@@ -6,8 +6,8 @@
 #include "apu.h"
 
 #define INES_HEADER_SIZE 16
-#define ROM_PATH "/Volumes/S/keep/roms/nes/Super Mario Bros.nes"
-#define AUDIO_SAMPLE_RATE 48000
+#define ROM_PATH "/mnt/c/Users/nathan/Downloads/ROMs/nes/Super Mario Bros.nes"
+#define AUDIO_SAMPLE_RATE 44100
 #define SCALE_FACTOR 2
 #define WINDOW_WIDTH (SCREEN_WIDTH * SCALE_FACTOR)
 #define WINDOW_HEIGHT (SCREEN_HEIGHT * SCALE_FACTOR)
@@ -145,6 +145,11 @@ void nes_init(void) {
     apu_init(AUDIO_SAMPLE_RATE);
 }
 
+void nes_free(void) {
+    cpu_free();
+    ppu_free();
+}
+
 void audio_input_callback(void* output_buffer, unsigned int frames) {
     u8 *samples = (u8*)output_buffer;
     apu_fill_buffer(samples, (usize)frames);
@@ -201,6 +206,7 @@ int main(void) {
     UnloadTexture(texture);
     CloseAudioDevice();
     CloseWindow();
+    nes_free();
 
     return 0;
 }
