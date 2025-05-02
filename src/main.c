@@ -4,10 +4,11 @@
 #include "cpu.h"
 #include "ppu.h"
 #include "apu.h"
+#include "ines.h"
 
 #define INES_HEADER_SIZE 16
-#define ROM_PATH "/mnt/c/Users/nathan/Downloads/ROMs/nes/Super Mario Bros.nes"
-#define AUDIO_SAMPLE_RATE 44100
+#define ROM_PATH "/Volumes/S/keep/roms/nes/Balloon Fight.nes"
+#define AUDIO_SAMPLE_RATE 48000
 #define SCALE_FACTOR 2
 #define WINDOW_WIDTH (SCREEN_WIDTH * SCALE_FACTOR)
 #define WINDOW_HEIGHT (SCREEN_HEIGHT * SCALE_FACTOR)
@@ -63,47 +64,6 @@ void handle_inputs(int gamepad) {
     update_controller1(state);
 }
 
-typedef struct {
-    u8 prg_banks;
-    u8 chr_banks;
-    u8 mapper_type;
-    bool mirroring_x;
-    bool mirroring_y;
-    bool battery;
-    bool trainer;
-} INES;
-
-INES parse_ines_header(u8* header) {
-    // Check for iNES header
-    if (header[0] != 'N' || header[1] != 'E' || header[2] != 'S' || header[3] != 0x1A) {
-        printf("Invalid iNES header\n");
-        exit(1);
-    }
-
-    INES ines;
-
-    ines.prg_banks = header[4];
-    ines.chr_banks = header[5];
-
-    // Mapper type
-    ines.mapper_type = ((header[6] & 0xF0) >> 4) | (header[7] & 0xF0);
-    ines.mirroring_x = (header[6] & 0x01) != 0;
-    ines.mirroring_y = (header[6] & 0x02) != 0;
-    ines.battery = (header[6] & 0x04) != 0;
-    ines.trainer = (header[6] & 0x08) != 0;
-
-    return ines;
-}
-
-void print_ines(INES ines) {
-    printf("PRG banks: %d\n", ines.prg_banks);
-    printf("CHR banks: %d\n", ines.chr_banks);
-    printf("Mapper type: %d\n", ines.mapper_type);
-    printf("Mirroring: %s\n", ines.mirroring_x ? "Horizontal" : "Vertical");
-    printf("Battery: %s\n", ines.battery ? "Yes" : "No");
-    printf("Trainer: %s\n", ines.trainer ? "Yes" : "No");
-}
-
 void nes_init(void) {
     // load ROM
     FILE* rom_file = fopen(ROM_PATH, "rb");
@@ -119,8 +79,8 @@ void nes_init(void) {
     // read INES header
     u8 header[INES_HEADER_SIZE];
     fread(header, 1, INES_HEADER_SIZE, rom_file);
-    INES ines = parse_ines_header(header);
-    print_ines(ines);
+    INES ines = ines_parse(header);
+    ines_print(ines);
 
     if (ines.trainer) {
         // skip trainer data

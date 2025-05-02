@@ -20,6 +20,7 @@ bool interrupt_disable_flag;
 u8* prg;
 usize prog_rom_size;
 u8 ram[2048];
+u8 prg_ram[2 * 1024];
 
 u8 controller1_state;
 bool controller1_strobe;
@@ -99,11 +100,23 @@ u8 read_byte(u16 addr) {
         // APU
     }
 
-    if (addr >= 0x8000) {
+    if (addr >= 0x6000 && addr < 0x8000) {
+        // PRG RAM
+        return prg_ram[((addr - 0x6000) & 0x7FF)];
+    }
+
+    if (addr <= 0xBFFF) {
+        // NROM: first 16KB of PRG ROM
         return prg[addr - 0x8000];
     }
 
-    return 0;
+    if (prog_rom_size == 16 * 1024) {
+        // mirror first 16KB of PRG ROM
+        return prg[(addr - 0x8000) & 0x3FFF];
+    } else {
+        // NROM: last 16KB of PRG ROM
+        return prg[addr - 0x8000];
+    }
 }
 
 void write_byte(u16 addr, u8 value) {
@@ -123,6 +136,18 @@ void write_byte(u16 addr, u8 value) {
         }
     } else if (addr < 0x4020) {
         apu_write(addr, value);
+    } else if (addr >= 0x6000 && addr < 0x8000) {
+        // PRG RAM
+        prg_ram[((addr - 0x6000) & 0x7FF)] = value;
+    } else if (addr < 0xFFFF) {
+        // PRG ROM
+        if (prog_rom_size == 16 * 1024) {
+            // mirror first 16KB of PRG ROM
+            prg[(addr - 0x8000) & 0x3FFF] = value;
+        } else {
+            // NROM: last 16KB of PRG ROM
+            prg[addr - 0x8000] = value;
+        }
     }
 }
 

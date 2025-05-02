@@ -14,7 +14,6 @@ else ifeq ($(UNAME_S),Darwin) # macOS
 endif
 
 OBJECTS = raylib-quickstart/bin/Debug/libraylib.a
-
 SOURCES += src/*.c
 
 .PHONY: clean
