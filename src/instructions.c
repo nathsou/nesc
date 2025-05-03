@@ -4,7 +4,7 @@
 
 inline void lda_imm(u8 value) {
     a = value;
-    update_nz(a);
+    cpu_update_nz(a);
 }
 
 inline void lda_zp(u8 addr) {
@@ -43,7 +43,7 @@ inline void lda_indy(u8 addr) {
 
 inline void ldx_imm(u8 value) {
     x = value;
-    update_nz(x);
+    cpu_update_nz(x);
 }
 
 inline void ldx_zp(u8 addr) {
@@ -66,7 +66,7 @@ inline void ldx_absy(u16 addr) {
 
 inline void ldy_imm(u8 value) {
     y = value;
-    update_nz(y);
+    cpu_update_nz(y);
 }
 
 inline void ldy_zp(u8 addr) {
@@ -88,71 +88,71 @@ inline void ldy_absx(u16 addr) {
 // STA - Store Accumulator
 
 inline void sta_zp(u8 addr) {
-    write_byte(addr, a);
+    cpu_write_byte(addr, a);
 }
 
 inline void sta_zpx(u8 addr) {
-    write_byte(addr + x, a);
+    cpu_write_byte(addr + x, a);
 }
 
 inline void sta_zpy(u8 addr) {
-    write_byte(addr + y, a);
+    cpu_write_byte(addr + y, a);
 }
 
 inline void sta_abs(u16 addr) {
-    write_byte(addr, a);
+    cpu_write_byte(addr, a);
 }
 
 inline void sta_absx(u16 addr) {
-    write_byte(addr + x, a);
+    cpu_write_byte(addr + x, a);
 }
 
 inline void sta_absy(u16 addr) {
-    write_byte(addr + y, a);
+    cpu_write_byte(addr + y, a);
 }
 
 inline void sta_indx(u8 addr) {
-    write_byte(indirect_x_addr(addr), a);
+    cpu_write_byte(indirect_x_addr(addr), a);
 }
 
 inline void sta_indy(u8 addr) {
-    write_byte(indirect_y_addr(addr), a);
+    cpu_write_byte(indirect_y_addr(addr), a);
 }
 
 // STX - Store X Register
 
 inline void stx_zp(u8 addr) {
-    write_byte(addr, x);
+    cpu_write_byte(addr, x);
 }
 
 inline void stx_zpy(u8 addr) {
-    write_byte(addr + y, x);
+    cpu_write_byte(addr + y, x);
 }
 
 inline void stx_abs(u16 addr) {
-    write_byte(addr, x);
+    cpu_write_byte(addr, x);
 }
 
 inline void stx_abs_y(u16 addr) {
-    write_byte(addr + y, x);
+    cpu_write_byte(addr + y, x);
 }
 
 // STY - Store Y Register
 
 inline void sty_zp(u8 addr) {
-    write_byte(addr, y);
+    cpu_write_byte(addr, y);
 }
 
 inline void sty_zpx(u8 addr) {
-    write_byte(addr + x, y);
+    cpu_write_byte(addr + x, y);
 }
 
 inline void sty_abs(u16 addr) {
-    write_byte(addr, y);
+    cpu_write_byte(addr, y);
 }
 
 inline void sty_abs_x(u16 addr) {
-    write_byte(addr + x, y);
+    cpu_write_byte(addr + x, y);
 }
 
 // ADC - Add with Carry
@@ -161,7 +161,7 @@ inline void adc_imm(u8 value) {
     u16 sum = a + value + (carry_flag ? 1 : 0);
     carry_flag = sum > 0xff;
     a = (u8)sum;
-    update_nz(a);
+    cpu_update_nz(a);
 }
 
 inline void adc_zp(u8 addr) {
@@ -202,7 +202,7 @@ inline void sbc_imm(u8 value) {
     u16 diff = a - value - (carry_flag ? 0 : 1);
     carry_flag = diff <= 0xff;
     a = diff & 0xff;
-    update_nz(a);
+    cpu_update_nz(a);
 }
 
 inline void sbc_zp(u8 addr) {
@@ -237,28 +237,28 @@ inline void sbc_indy(u8 addr) {
 
 inline void tax(void) {
     x = a;
-    update_nz(x);
+    cpu_update_nz(x);
 }
 
 // TAY - Transfer Accumulator to Y
 
 inline void tay(void) {
     y = a;
-    update_nz(y);
+    cpu_update_nz(y);
 }
 
 // TSX - Transfer Stack Pointer to X
 
 inline void tsx(void) {
     x = sp;
-    update_nz(x);
+    cpu_update_nz(x);
 }
 
 // TXA - Transfer X to Accumulator
 
 inline void txa(void) {
     a = x;
-    update_nz(a);
+    cpu_update_nz(a);
 }
 
 // TXS - Transfer X to Stack Pointer
@@ -271,14 +271,14 @@ inline void txs(void) {
 
 inline void tya(void) {
     a = y;
-    update_nz(a);
+    cpu_update_nz(a);
 }
 
 // AND - Logical AND
 
 inline void and_imm(u8 value) {
     a &= value;
-    update_nz(a);
+    cpu_update_nz(a);
 }
 
 inline void and_zp(u8 addr) {
@@ -313,7 +313,7 @@ inline void and_indy(u8 addr) {
 
 inline void ora_imm(u8 value) {
     a |= value;
-    update_nz(a);
+    cpu_update_nz(a);
 }
 
 inline void ora_zp(u8 addr) {
@@ -352,7 +352,7 @@ inline void ora_indy(u8 addr) {
 
 inline void eor_imm(u8 value) {
     a ^= value;
-    update_nz(a);
+    cpu_update_nz(a);
 }
 
 inline void eor_zp(u8 addr) {
@@ -388,15 +388,15 @@ inline void eor_indy(u8 addr) {
 inline void asl_acc(void) {
     carry_flag = a & 0x80;
     a <<= 1;
-    update_nz(a);
+    cpu_update_nz(a);
 }
 
 inline void asl_abs(u16 addr) {
-    u8 val = read_byte(addr);
+    u8 val = cpu_read_byte(addr);
     carry_flag = val & 0x80;
     val <<= 1;
-    write_byte(addr, val);
-    update_nz(val);
+    cpu_write_byte(addr, val);
+    cpu_update_nz(val);
 }
 
 inline void asl_zp(u8 addr) {
@@ -416,15 +416,15 @@ inline void asl_absx(u16 addr) {
 inline void lsr_acc(void) {
     carry_flag = a & 1;
     a >>= 1;
-    update_nz(a);
+    cpu_update_nz(a);
 }
 
 inline void _lsr(u16 addr) {
-    u8 val = read_byte(addr);
+    u8 val = cpu_read_byte(addr);
     carry_flag = val & 1;
     val >>= 1;
-    write_byte(addr, val);
-    update_nz(val);
+    cpu_write_byte(addr, val);
+    cpu_update_nz(val);
 }
 
 inline void lsr_zp(u8 addr) {
@@ -446,10 +446,10 @@ inline void lsr_absx(u16 addr) {
 // INC - Increment Memory
 
 inline void _inc(u16 addr) {
-    u8 val = read_byte(addr);
+    u8 val = cpu_read_byte(addr);
     val++;
-    write_byte(addr, val);
-    update_nz(val);
+    cpu_write_byte(addr, val);
+    cpu_update_nz(val);
 }
 
 inline void inc_zp(u8 addr) {
@@ -472,23 +472,23 @@ inline void inc_absx(u16 addr) {
 
 inline void inx(void) {
     x++;
-    update_nz(x);
+    cpu_update_nz(x);
 }
 
 // INY - Increment Y Register
 
 inline void iny(void) {
     y++;
-    update_nz(y);
+    cpu_update_nz(y);
 }
 
 // DEC - Decrement Memory
 
 inline void _dec(u16 addr) {
-    u8 val = read_byte(addr);
+    u8 val = cpu_read_byte(addr);
     val--;
-    write_byte(addr, val);
-    update_nz(val);
+    cpu_write_byte(addr, val);
+    cpu_update_nz(val);
 }
 
 inline void dec_zp(u8 addr) {
@@ -511,14 +511,14 @@ inline void dec_absx(u16 addr) {
 
 inline void dex(void) {
     x--;
-    update_nz(x);
+    cpu_update_nz(x);
 }
 
 // DEY - Decrement Y Register
 
 inline void dey(void) {
     y--;
-    update_nz(y);
+    cpu_update_nz(y);
 }
 
 // CLC - Clear Carry Flag
@@ -560,7 +560,7 @@ inline void sei(void) {
 
 inline void cmp_vals(u8 lhs, u8 rhs) {
     carry_flag = lhs >= rhs;
-    update_nz(lhs - rhs);
+    cpu_update_nz(lhs - rhs);
 }
 
 // CMP - Compare
@@ -632,7 +632,7 @@ inline void cpy_abs(u16 addr) {
 // PHA - Push Accumulator
 
 inline void pha(void) {
-    write_byte(sp | 0x100, a);
+    cpu_write_byte(sp | 0x100, a);
     sp--;
 }
 
@@ -640,8 +640,8 @@ inline void pha(void) {
 
 inline void pla(void) {
     sp++;
-    a = read_byte(sp | 0x100);
-    update_nz(a);
+    a = cpu_read_byte(sp | 0x100);
+    cpu_update_nz(a);
 }
 
 // BIT - Bit Test
@@ -662,13 +662,13 @@ inline void bit_abs(u16 addr) {
 // ROL - Rotate Left
 
 inline void _rol(u16 addr) {
-    u8 val = read_byte(addr);
+    u8 val = cpu_read_byte(addr);
     bool next_carry_flag = val & 0x80;
     val <<= 1;
     val |= carry_flag;
     carry_flag = next_carry_flag;
-    write_byte(addr, val);
-    update_nz(val);
+    cpu_write_byte(addr, val);
+    cpu_update_nz(val);
 }
 
 inline void rol_acc(void) {
@@ -676,7 +676,7 @@ inline void rol_acc(void) {
     a <<= 1;
     a |= carry_flag;
     carry_flag = next_carry_flag;
-    update_nz(a);
+    cpu_update_nz(a);
 }
 
 inline void rol_zp(u8 addr) {
@@ -698,7 +698,7 @@ inline void rol_absx(u16 addr) {
 // ROR - Rotate Right
 
 void _ror(u16 addr) {
-    u8 val = read_byte(addr);
+    u8 val = cpu_read_byte(addr);
     bool old_carry = carry_flag;
     carry_flag = val & 1;
     val >>= 1;
@@ -707,8 +707,8 @@ void _ror(u16 addr) {
         val |= 0x80;
     }
 
-    write_byte(addr, val);
-    update_nz(val);
+    cpu_write_byte(addr, val);
+    cpu_update_nz(val);
 }
 
 inline void ror_acc(void) {
@@ -720,7 +720,7 @@ inline void ror_acc(void) {
         a |= 0x80;
     }
 
-    update_nz(a);
+    cpu_update_nz(a);
 }
 
 void ror_zp(u8 addr) {
@@ -745,55 +745,55 @@ inline void ror_absx(u16 addr) {
         val |= 0x80;
     }
 
-    write_byte(addr, val);
-    update_nz(val);
+    cpu_write_byte(addr, val);
+    cpu_update_nz(val);
 }
 
 // stack instructions
 
 void php(void){
     brk_flag = true;
-    push(get_flags());
+    cpu_push(cpu_get_flags());
 }
 
 void plp(void) {
-    u8 flags = pull();
+    u8 flags = cpu_pull();
     flags &= 0b11101111;
     flags |= 0b00100000;
-    set_flags(flags);
+    cpu_set_flags(flags);
 }
 
 void jsr(void) {
     u16 ret_addr = pc + 1;
-    push_word(ret_addr);
-    u16 target_addr = read_word(pc);
+    cpu_push_word(ret_addr);
+    u16 target_addr = cpu_read_word(pc);
     pc = target_addr;
 }
 
 void rts(void) {
-    u16 ret_addr = pull_word() + 1;
+    u16 ret_addr = cpu_pull_word() + 1;
     pc = ret_addr;
 }
 
 void rti(void) {
     plp();
-    pc = pull_word();
+    pc = cpu_pull_word();
 }
 
 // interrupts
 
 void brk(void) {
-    push_word(pc);
+    cpu_push_word(pc);
     php();
     sei();
-    pc = read_word(CPU_IRQ_VECTOR);
+    pc = cpu_read_word(CPU_IRQ_VECTOR);
 }
 
 void nmi(void) {
-    push_word(pc);
+    cpu_push_word(pc);
     php();
     sei();
-    pc = read_word(CPU_NMI_VECTOR);
+    pc = cpu_read_word(CPU_NMI_VECTOR);
     cycles += 7;
 }
 
@@ -807,11 +807,11 @@ inline void nop(void) {}
 // branch instructions
 
 inline void jmp_abs(u16 addr) {
-    pc = addr;
+    pc = cpu_wrap_address(addr);
 }
 
 void jmp_ind(u16 addr) {
-    u16 target_addr = read_word(addr);
+    u16 target_addr = cpu_read_word(addr);
     jmp_abs(target_addr);
 }
 

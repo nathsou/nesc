@@ -29,11 +29,16 @@ extern u8 ram[0x800]; // 2KB
 
 extern usize cycles;
 
-u8 read_byte(u16 addr);
-void write_byte(u16 addr, u8 value);
+u16 cpu_wrap_address(u16 addr);
 
-u16 read_word(u16 addr);
-void write_word(u16 addr, u16 value);
+u8 cpu_read_byte(u16 addr);
+void cpu_write_byte(u16 addr, u8 value);
+
+u16 cpu_read_word(u16 addr);
+void cpu_write_word(u16 addr, u16 value);
+
+u8 cpu_next_byte(void);
+u16 cpu_next_word(void);
 
 u8 next_byte(void);
 u16 next_word(void);
@@ -47,7 +52,7 @@ void cpu_free(void);
 
 // addressing mode utils
 
-void update_nz(u8 value);
+void cpu_update_nz(u8 value);
 
 u8 zero_page(u8 addr);
 u8 zero_page_x(u8 addr);
@@ -63,12 +68,12 @@ u16 indirect_y_addr(u8 addr);
 u8 indirect_x_val(u8 addr);
 u8 indirect_y_val(u8 addr);
 
-void push(u8 value);
-u8 pull(void);
-u16 pull_word(void);
-void push_word(u16 value);
-u8 get_flags(void);
-void set_flags(u8 flags);
+void cpu_push(u8 value);
+u8 cpu_pull(void);
+u16 cpu_pull_word(void);
+void cpu_push_word(u16 value);
+u8 cpu_get_flags(void);
+void cpu_set_flags(u8 flags);
 
 // engine
 void cpu_step_frame(void);
