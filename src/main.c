@@ -7,7 +7,7 @@
 #include "ines.h"
 
 #define INES_HEADER_SIZE 16
-#define ROM_PATH "/Volumes/S/keep/roms/nes/Balloon Fight.nes"
+#define ROM_PATH "/Volumes/S/keep/roms/nes/Super Mario Bros.nes"
 #define AUDIO_SAMPLE_RATE 48000
 #define SCALE_FACTOR 2
 #define WINDOW_WIDTH (SCREEN_WIDTH * SCALE_FACTOR)
@@ -105,6 +105,19 @@ void nes_init(void) {
     apu_init(AUDIO_SAMPLE_RATE);
 }
 
+void nes_step_frame(void) {
+    while (true) {
+        usize cpu_cycles = cpu_step();
+        
+        if (ppu_step(cpu_cycles * 3)) {
+            break;
+        }
+    }
+
+    apu_step_frame();
+    ppu_render();
+}
+
 void nes_free(void) {
     cpu_free();
     ppu_free();
@@ -119,6 +132,7 @@ int main(void) {
     nes_init();
 
     SetTargetFPS(60);
+    SetConfigFlags(FLAG_VSYNC_HINT);
     InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "nesc");
 
     SetAudioStreamBufferSizeDefault(128);
@@ -139,7 +153,6 @@ int main(void) {
     Texture2D texture = LoadTextureFromImage(image);
     SetTextureFilter(texture, TEXTURE_FILTER_POINT);
     SetExitKey(KEY_NULL);
-    SetConfigFlags(FLAG_VSYNC_HINT);
     SetWindowMaxSize(WINDOW_WIDTH, WINDOW_HEIGHT);
     SetWindowMinSize(WINDOW_HEIGHT, WINDOW_HEIGHT);
 
@@ -150,9 +163,7 @@ int main(void) {
 
     while (!WindowShouldClose()) {
         handle_inputs(gamepad);
-        cpu_step_frame();
-        ppu_render();
-        apu_step_frame();
+        nes_step_frame();
         UpdateTexture(texture, frame);
 
         BeginDrawing();

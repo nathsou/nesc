@@ -57,6 +57,7 @@ void ppu_write_register(u16 addr, u8 value);
 
 u8 ppu_read(u16 addr);
 void ppu_write(u16 addr, u8 value);
+bool ppu_step(usize cycles);
 void ppu_render(void);
 
 #endif

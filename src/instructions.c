@@ -807,7 +807,7 @@ inline void nop(void) {}
 // branch instructions
 
 inline void jmp_abs(u16 addr) {
-    pc = cpu_wrap_address(addr);
+    pc = addr;
 }
 
 void jmp_ind(u16 addr) {

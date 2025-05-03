@@ -29,6 +29,9 @@ u8 oam_dma;
 u8 frame[SCREEN_WIDTH * SCREEN_HEIGHT * 3];
 bool opaque_bg_mask[SCREEN_WIDTH * SCREEN_HEIGHT];
 
+usize scanlines;
+usize dots;
+
 // 64 RGB colors
 u8 COLOR_PALETTE[] = {
    0x80, 0x80, 0x80, 0x00, 0x3D, 0xA6, 0x00, 0x12, 0xB0, 0x44, 0x00, 0x96, 0xA1, 0x00, 0x5E,
@@ -57,32 +60,21 @@ void clear_bg_mask(void) {
 void ppu_init(u8* chr) {
     chr_rom = chr;
     clear_frame();
+    scanlines = 0;
+    dots = 0;
 }
 
 void ppu_free(void) {
     free(chr_rom);
 }
 
-bool status_clear = false;
-
 u8 ppu_read_register(u16 addr) {
     switch (addr) {
         case 0x2002: {
-            // in SMB, the status register is only used to:
-            // 1. clear the write flip flop (ppu_w)
-            // 2. detect vblank
-            // 3. detect sprite 0 hit
-
-            // items 2 and 3 are used for timing purposes
-            // since we're rendering the entire frame at once, we can ignore them
-            // however, we can't always return the same value
-            // as some loops wait for a flag to be set or cleared
-
-            status_clear = !status_clear;
-            
             ppu_w = 0;
-            // vblank and sprite 0 hit
-            return status_clear ? 0 : 0b11000000;
+            u8 status = ppu_status;
+            ppu_status &= ~PPU_STATUS_VBLANK;
+            return status;
         }
         case 0x2004: {
             return oam[oam_addr];
@@ -106,7 +98,12 @@ void ppu_transfer_oam(u16 start_addr) {
 void ppu_write_register(u16 addr, u8 value) {
     switch (addr) {
         case 0x2000: {
+            bool prev_nmi = ppu_ctrl & PPU_CTRL_NMI_ENABLE;
             ppu_ctrl = value;
+
+            if (!prev_nmi && (value & PPU_CTRL_NMI_ENABLE) && (ppu_status & PPU_STATUS_VBLANK)) {
+                nmi();
+            }
             break;
         }
         case 0x2001: {
@@ -255,26 +252,10 @@ void draw_background_tile(
     }
 }
 
-bool show_status_bar() {
-    return ram[0x722]; // Sprite0HitDetectFlag
-}
-
-void render_status_bar(size_t bank_offset) {
-    // the status bar spans the top 4 rows
-    for (size_t i = 0; i < 4 * TILES_PER_ROW; i++) {
-        u8 tile_x = i % TILES_PER_ROW;
-        u8 tile_y = (u8)(i / TILES_PER_ROW);
-        u8 tile = nametable[i];
-        size_t palette_index = get_background_palette_index(tile_x, tile_y, 0);
-
-        draw_background_tile(tile, tile_x * 8, tile_y * 8, bank_offset, palette_index, 0, 0, SCREEN_WIDTH);
-    }
-}
-
-void render_nametable(size_t nametable_offset, size_t bank_offset, int shift_x, int min_x, int max_x, size_t min_tile_y) {
+void render_nametable(size_t nametable_offset, size_t bank_offset, int shift_x, int min_x, int max_x) {
     bool draw_leftmost_tile = ppu_mask & 0b10;
 
-    for (size_t i = min_tile_y * TILES_PER_ROW; i < TILES_PER_ROW * TILES_PER_COLUMN; i++) {
+    for (size_t i = 0; i < TILES_PER_ROW * TILES_PER_COLUMN; i++) {
         u8 tile_x = i % TILES_PER_ROW;
         u8 tile_y = (u8)(i / TILES_PER_ROW);
 
@@ -291,10 +272,8 @@ void render_nametable(size_t nametable_offset, size_t bank_offset, int shift_x, 
 
 void render_background(void) {
     // https://austinmorlan.com/posts/nes_rendering_overview/
-    size_t bank_offset = ppu_ctrl & 0b10000 ? 0x1000 : 0;
+    size_t bank_offset = (ppu_ctrl & PPU_CTRL_BACKGROUND_PATTERN_TABLE) ? 0x1000 : 0;
     size_t nametable1_offset, nametable2_offset;
-    bool status_bar_visible = show_status_bar();
-    size_t min_tile_y = status_bar_visible ? 4 : 0;
 
     // vertical mirroring
     if (ppu_ctrl & 0b1) {
@@ -305,12 +284,8 @@ void render_background(void) {
         nametable2_offset = 0x400;
     }
 
-    render_nametable(nametable1_offset, bank_offset, -((int)ppu_scroll_x), ppu_scroll_x, SCREEN_WIDTH, min_tile_y);
-    render_nametable(nametable2_offset, bank_offset, SCREEN_WIDTH - (int)ppu_scroll_x, 0, ppu_scroll_x, min_tile_y);
-
-    if (status_bar_visible) {
-        render_status_bar(bank_offset);
-    }
+    render_nametable(nametable1_offset, bank_offset, -((int)ppu_scroll_x), ppu_scroll_x, SCREEN_WIDTH);
+    render_nametable(nametable2_offset, bank_offset, SCREEN_WIDTH - (int)ppu_scroll_x, 0, ppu_scroll_x);
 }
 
 void draw_sprite_tile(
@@ -378,6 +353,45 @@ void render_sprites(void) {
     }
 }
 
+inline bool sprite_zero_hit(void) {
+    u8 sprite0_y = oam[0];
+    return (ppu_mask & PPU_MASK_SHOW_SPRITES) && (sprite0_y == scanlines);
+}
+
+bool ppu_step(usize cycles) {
+    bool new_frame = false;
+
+    for (usize i = 0; i < cycles; i++) {
+        dots++;
+
+        if (dots > 340) {
+            if (scanlines < 240 && sprite_zero_hit()) {
+                ppu_status |= PPU_STATUS_SPRITE0_HIT;
+            }
+
+            dots = 0;
+            scanlines++;
+
+            if (scanlines == 241) {
+                new_frame = true;
+                ppu_status |= PPU_STATUS_VBLANK;
+                ppu_status &= ~PPU_STATUS_SPRITE0_HIT;
+
+                if (ppu_ctrl & PPU_CTRL_NMI_ENABLE) {
+                    nmi();
+                }
+            }
+    
+            if (scanlines > 261) {
+                ppu_status &= ~(PPU_STATUS_VBLANK | PPU_STATUS_SPRITE0_HIT | PPU_STATUS_SPRITE_OVERFLOW);
+                scanlines = 0;
+            }
+        }
+    }
+
+    return new_frame;
+}
+
 void ppu_render(void) {
     oam_addr = 0; // reset OAM address
 
@@ -394,10 +408,5 @@ void ppu_render(void) {
 
     if (render_sp) {
         render_sprites();
-    }
-
-    if (ppu_ctrl & PPU_CTRL_NMI_ENABLE) {
-        ppu_status |= PPU_STATUS_VBLANK;
-        nmi();
     }
 }

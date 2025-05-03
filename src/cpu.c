@@ -73,19 +73,6 @@ void cpu_free(void) {
     free(prg);
 }
 
-inline u16 cpu_wrap_address(u16 addr) {
-    if (addr > prog_rom_size) {
-        return (u16)((s16)addr - (s16)prog_rom_size);
-    }
-
-    return addr;
-}
-
-inline void cpu_increment_pc(s16 offset) {
-    pc += offset;
-    cpu_wrap_address(pc);
-}
-
 u8 cpu_read_byte(u16 addr) {
     if (addr < 0x2000) {
         return ram[addr & 0x7ff];
@@ -256,7 +243,7 @@ inline u16 cpu_pull_word(void) {
 
 inline u8 cpu_next_byte(void) {
     u8 byte = cpu_read_byte(pc);
-    cpu_increment_pc(1);
+    pc++;
     return byte;
 }
 
@@ -285,10 +272,10 @@ void cpu_set_flags(u8 flags) {
     brk_flag = (flags & 32) != 0;
 }
 
-void cpu_step(void) {
+usize cpu_step(void) {
     u8 opcode = cpu_read_byte(pc);
     // printf("PC: %04X, opcode: %02X, A: %02X, X: %02X, Y: %02X, SP: %02X\n", pc, opcode, a, x, y, sp);
-    cpu_increment_pc(1);
+    pc++;
 
     switch (opcode) {
         case 0x00: brk(); break;
@@ -449,12 +436,9 @@ void cpu_step(void) {
     }
 
     cycles += INST_CYCLES[opcode];
-}
-
-void cpu_step_frame(void) {
+    usize step_cycles = cycles;
     cycles = 0;
 
-    while (cycles < CPU_CYCLES_PER_FRAME) {
-        cpu_step();
-    }
+    return step_cycles;
 }
+

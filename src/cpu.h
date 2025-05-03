@@ -29,8 +29,6 @@ extern u8 ram[0x800]; // 2KB
 
 extern usize cycles;
 
-u16 cpu_wrap_address(u16 addr);
-
 u8 cpu_read_byte(u16 addr);
 void cpu_write_byte(u16 addr, u8 value);
 
@@ -74,8 +72,6 @@ u16 cpu_pull_word(void);
 void cpu_push_word(u16 value);
 u8 cpu_get_flags(void);
 void cpu_set_flags(u8 flags);
-
-// engine
-void cpu_step_frame(void);
+usize cpu_step(void);
 
 #endif
