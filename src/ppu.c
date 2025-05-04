@@ -31,6 +31,7 @@ bool opaque_bg_mask[SCREEN_WIDTH * SCREEN_HEIGHT];
 
 usize scanlines;
 usize dots;
+usize frame_count;
 
 // 64 RGB colors
 u8 COLOR_PALETTE[] = {
@@ -62,6 +63,7 @@ void ppu_init(u8* chr) {
     clear_frame();
     scanlines = 0;
     dots = 0;
+    frame_count = 0;
 }
 
 void ppu_free(void) {
@@ -181,8 +183,8 @@ void ppu_write(u16 addr, u8 value) {
     }
 }
 
-void set_pixel(size_t x, size_t y, u8 palette_color) {
-    size_t index = (y * SCREEN_WIDTH + x) * 3;
+void set_pixel(usize x, usize y, u8 palette_color) {
+    usize index = (y * SCREEN_WIDTH + x) * 3;
 
     if (index < SCREEN_WIDTH * SCREEN_HEIGHT * 3) {
         u8 r = COLOR_PALETTE[palette_color * 3];
@@ -195,32 +197,32 @@ void set_pixel(size_t x, size_t y, u8 palette_color) {
     }
 }
 
-size_t get_background_palette_index(size_t tile_col, size_t tile_row, size_t nametable_offset) {
-    size_t attr_table_index = (tile_row / 4) * 8 + (tile_col / 4);
+usize get_background_palette_index(usize tile_col, usize tile_row, usize nametable_offset) {
+    usize attr_table_index = (tile_row / 4) * 8 + (tile_col / 4);
     // the attribute table is stored after the nametable (960 bytes)
-    size_t attr_table_byte = nametable[nametable_offset + 960 + attr_table_index];
-    size_t block_x = (tile_col % 4) / 2;
-    size_t block_y = (tile_row % 4) / 2;
-    size_t shift = block_y * 4 + block_x * 2;
+    usize attr_table_byte = nametable[nametable_offset + 960 + attr_table_index];
+    usize block_x = (tile_col % 4) / 2;
+    usize block_y = (tile_row % 4) / 2;
+    usize shift = block_y * 4 + block_x * 2;
 
     return ((attr_table_byte >> shift) & 0b11) * BYTES_PER_PALETTE;
 }
 
 void draw_background_tile(
-    size_t n,
-    size_t x,
-    size_t y,
-    size_t bank_offset,
-    size_t palette_idx,
+    usize n,
+    usize x,
+    usize y,
+    usize bank_offset,
+    usize palette_idx,
     int shift_x,
     int min_x,
     int max_x
 ) {
-    for (size_t tile_y = 0; tile_y < 8; tile_y++) {
+    for (usize tile_y = 0; tile_y < 8; tile_y++) {
         u8 plane1 = chr_rom[bank_offset + n * 16 + tile_y];
         u8 plane2 = chr_rom[bank_offset + n * 16 + tile_y + 8];
 
-        for (size_t tile_x = 0; tile_x < 8; tile_x++) {
+        for (usize tile_x = 0; tile_x < 8; tile_x++) {
             u8 bit0 = plane1 & 1;
             u8 bit1 = plane2 & 1;
             u8 color_index = (u8)((bit1 << 1) | bit0);
@@ -240,8 +242,8 @@ void draw_background_tile(
             int nametable_x = (int)x + ((int)(7 - (int)tile_x));
 
             if (nametable_x >= min_x && nametable_x < max_x) {
-                size_t screen_x = (size_t)(shift_x + nametable_x);
-                size_t screen_y = y + tile_y;
+                usize screen_x = (usize)(shift_x + nametable_x);
+                usize screen_y = y + tile_y;
                 set_pixel(screen_x, screen_y, palette_offset);
 
                 if (!is_universal_bg_color && screen_x >= 0 && screen_x < SCREEN_WIDTH) {
@@ -252,10 +254,10 @@ void draw_background_tile(
     }
 }
 
-void render_nametable(size_t nametable_offset, size_t bank_offset, int shift_x, int min_x, int max_x) {
-    bool draw_leftmost_tile = ppu_mask & 0b10;
+void render_nametable(usize nametable_offset, usize bank_offset, int shift_x, int min_x, int max_x) {
+    bool draw_leftmost_tile = ppu_mask & PPU_MASK_SHOW_BACKGROUND_LEFTMOST;
 
-    for (size_t i = 0; i < TILES_PER_ROW * TILES_PER_COLUMN; i++) {
+    for (usize i = 0; i < TILES_PER_ROW * TILES_PER_COLUMN; i++) {
         u8 tile_x = i % TILES_PER_ROW;
         u8 tile_y = (u8)(i / TILES_PER_ROW);
 
@@ -264,45 +266,42 @@ void render_nametable(size_t nametable_offset, size_t bank_offset, int shift_x, 
         }
 
         u8 tile = nametable[nametable_offset + i];
-        size_t palette_index = get_background_palette_index(tile_x, tile_y, nametable_offset);
+        usize palette_index = get_background_palette_index(tile_x, tile_y, nametable_offset);
 
         draw_background_tile(tile, tile_x * 8, tile_y * 8, bank_offset, palette_index, shift_x, min_x, max_x);
     }
 }
 
-void render_background(void) {
-    // https://austinmorlan.com/posts/nes_rendering_overview/
-    size_t bank_offset = (ppu_ctrl & PPU_CTRL_BACKGROUND_PATTERN_TABLE) ? 0x1000 : 0;
-    size_t nametable1_offset, nametable2_offset;
+void render_row(usize y, usize nametable_offset, usize bank_offset, int shift_x, int min_x, int max_x) {
+    bool draw_leftmost_tile = ppu_mask & PPU_MASK_SHOW_BACKGROUND_LEFTMOST;
 
-    // vertical mirroring
-    if (ppu_ctrl & 0b1) {
-        nametable1_offset = 0x400;
-        nametable2_offset = 0x000;
-    } else {
-        nametable1_offset = 0x000;
-        nametable2_offset = 0x400;
+    for (usize i = 0; i < TILES_PER_ROW; i++) {
+        if (!draw_leftmost_tile && i == 0) {
+            continue;
+        }
+
+        u8 tile = nametable[nametable_offset + y * TILES_PER_ROW + i];
+        usize palette_index = get_background_palette_index(i, y, nametable_offset);
+
+        draw_background_tile(tile, i * 8, y * 8, bank_offset, palette_index, shift_x, min_x, max_x);
     }
-
-    render_nametable(nametable1_offset, bank_offset, -((int)ppu_scroll_x), ppu_scroll_x, SCREEN_WIDTH);
-    render_nametable(nametable2_offset, bank_offset, SCREEN_WIDTH - (int)ppu_scroll_x, 0, ppu_scroll_x);
 }
 
 void draw_sprite_tile(
-    size_t n,
-    size_t x,
-    size_t y,
-    size_t bank_offset,
-    size_t palette_idx,
+    usize n,
+    usize x,
+    usize y,
+    usize bank_offset,
+    usize palette_idx,
     bool flip_x,
     bool flip_y,
     bool behind_bg
 ) {
-    for (size_t tile_y = 0; tile_y < 8; tile_y++) {
+    for (usize tile_y = 0; tile_y < 8; tile_y++) {
         u8 plane1 = chr_rom[bank_offset + n * 16 + tile_y];
         u8 plane2 = chr_rom[bank_offset + n * 16 + tile_y + 8];
 
-        for (size_t tile_x = 0; tile_x < 8; tile_x++) {
+        for (usize tile_x = 0; tile_x < 8; tile_x++) {
             u8 bit0 = plane1 & 1;
             u8 bit1 = plane2 & 1;
             u8 color_index = (u8)((bit1 << 1) | bit0);
@@ -314,8 +313,8 @@ void draw_sprite_tile(
                 u8 palette_offset = palette_table[palette_idx + color_index - 1];
                 u8 flipped_x = (u8)(flip_x ? tile_x : 7 - tile_x);
                 u8 flipped_y = (u8)(flip_y ? 7 - tile_y : tile_y);
-                size_t screen_x = x + flipped_x;
-                size_t screen_y = y + flipped_y;
+                usize screen_x = x + flipped_x;
+                usize screen_y = y + flipped_y;
 
                 bool is_hidden = behind_bg && opaque_bg_mask[screen_y * SCREEN_WIDTH + screen_x];
 
@@ -329,7 +328,7 @@ void draw_sprite_tile(
 
 void render_sprites(void) {
     // https://www.nesdev.org/wiki/PPU_OAM
-    size_t bank_offset = ppu_ctrl & 0b1000 ? 0x1000 : 0;
+    usize bank_offset = ppu_ctrl & 0b1000 ? 0x1000 : 0;
     bool draw_leftmost_tile = ppu_mask & 0b100;
 
     // sprites with lower OAM indices are drawn in front
@@ -355,25 +354,44 @@ void render_sprites(void) {
 
 inline bool sprite_zero_hit(void) {
     u8 sprite0_y = oam[0];
-    return (ppu_mask & PPU_MASK_SHOW_SPRITES) && (sprite0_y == scanlines);
+    u8 sprite0_x = oam[3];
+    return (ppu_mask & (PPU_MASK_SHOW_SPRITES | PPU_MASK_SHOW_BACKGROUND)) && (sprite0_y == scanlines) && (sprite0_x == dots);
 }
 
 bool ppu_step(usize cycles) {
     bool new_frame = false;
 
     for (usize i = 0; i < cycles; i++) {
+        if (sprite_zero_hit()) {
+            ppu_status |= PPU_STATUS_SPRITE0_HIT;
+        }
+
+        if (scanlines < 240 && dots == 256 && (ppu_mask & PPU_MASK_SHOW_BACKGROUND) && (scanlines & 7) == 0) {
+            usize bank_offset = (ppu_ctrl & PPU_CTRL_BACKGROUND_PATTERN_TABLE) ? 0x1000 : 0;
+            usize nametable1_offset, nametable2_offset;
+        
+            // vertical mirroring
+            if (ppu_ctrl & PPU_CTRL_BASE_NAMETABLE_ADDR) {
+                nametable1_offset = 0x400;
+                nametable2_offset = 0x000;
+            } else {
+                nametable1_offset = 0x000;
+                nametable2_offset = 0x400;
+            }
+        
+            render_row(scanlines / 8, nametable1_offset, bank_offset, -((int)ppu_scroll_x), ppu_scroll_x, SCREEN_WIDTH);
+            render_row(scanlines / 8, nametable2_offset, bank_offset, SCREEN_WIDTH - (int)ppu_scroll_x, 0, ppu_scroll_x);
+        }
+
         dots++;
 
         if (dots > 340) {
-            if (scanlines < 240 && sprite_zero_hit()) {
-                ppu_status |= PPU_STATUS_SPRITE0_HIT;
-            }
-
             dots = 0;
             scanlines++;
 
             if (scanlines == 241) {
                 new_frame = true;
+                frame_count++;
                 ppu_status |= PPU_STATUS_VBLANK;
                 ppu_status &= ~PPU_STATUS_SPRITE0_HIT;
 
@@ -398,15 +416,13 @@ void ppu_render(void) {
     bool render_bg = ppu_mask & PPU_MASK_SHOW_BACKGROUND;
     bool render_sp = ppu_mask & PPU_MASK_SHOW_SPRITES;
 
-    clear_bg_mask();
-
-    if (render_bg) {
-        render_background();
-    } else {
+    if (!render_bg) {
         clear_frame();
     }
 
     if (render_sp) {
         render_sprites();
     }
+    
+    clear_bg_mask();
 }

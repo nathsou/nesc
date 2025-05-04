@@ -132,7 +132,7 @@ void cpu_write_byte(u16 addr, u8 value) {
     if (addr < 0x2000) {
         ram[addr & 0b0000011111111111] = value;
     } else if (addr < 0x4000) {
-        ppu_write_register(0x2000 + (addr & 0b111), value);
+        ppu_write_register(0x2000 + (addr & 7), value);
     } else if (addr == 0x4014) {
         u16 start_addr = (u16)(value << 8);
         ppu_transfer_oam(start_addr);
