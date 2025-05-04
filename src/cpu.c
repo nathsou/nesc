@@ -27,7 +27,7 @@ bool controller1_strobe;
 u8 controller1_btn_index;
 usize cycles;
 
-usize INST_CYCLES[] = {
+const usize INST_CYCLES[] = {
     7, 6, 2, 8, 3, 3, 5, 5, 3, 2, 2, 2, 4, 4, 6, 6, 2, 5, 2, 8, 4, 4, 6, 6, 2, 4, 2, 7, 4, 4, 7, 7,
     6, 6, 2, 8, 3, 3, 5, 5, 4, 2, 2, 2, 4, 4, 6, 6, 2, 5, 2, 8, 4, 4, 6, 6, 2, 4, 2, 7, 4, 4, 7, 7,
     6, 6, 2, 8, 3, 3, 5, 5, 3, 2, 2, 2, 3, 4, 6, 6, 2, 5, 2, 8, 4, 4, 6, 6, 2, 4, 2, 7, 4, 4, 7, 7,
@@ -36,6 +36,25 @@ usize INST_CYCLES[] = {
     2, 6, 2, 6, 3, 3, 3, 3, 2, 2, 2, 2, 4, 4, 4, 4, 2, 5, 2, 5, 4, 4, 4, 4, 2, 4, 2, 4, 4, 4, 4, 4,
     2, 6, 2, 8, 3, 3, 5, 5, 2, 2, 2, 2, 4, 4, 6, 6, 2, 5, 2, 8, 4, 4, 6, 6, 2, 4, 2, 7, 4, 4, 7, 7,
     2, 6, 2, 8, 3, 3, 5, 5, 2, 2, 2, 2, 4, 4, 6, 6, 2, 5, 2, 8, 4, 4, 6, 6, 2, 4, 2, 7, 4, 4, 7, 7,
+};
+
+const char* INST_OPCODES[] = {
+    "BRK", "ORA", "ILL", "ILL", "ILL", "ORA", "ASL", "ILL", "PHP", "ORA", "ASL", "ILL", "ILL", "ORA", "ASL", "ILL",
+    "BPL", "ORA", "ILL", "ILL", "ILL", "ORA", "ASL", "ILL", "CLC", "ORA", "ILL", "ILL", "ILL", "ORA", "ASL", "ILL",
+    "JSR", "AND", "ILL", "ILL", "BIT", "AND", "ROL", "ILL", "PLP", "AND", "ROL", "ILL", "BIT", "AND", "ROL", "ILL",
+    "BMI", "AND", "ILL", "ILL", "ILL", "AND", "ROL", "ILL", "SEC", "AND", "ILL", "ILL", "ILL", "AND", "ROL", "ILL",
+    "RTI", "EOR", "ILL", "ILL", "ILL", "EOR", "LSR", "ILL", "PHA", "EOR", "LSR", "ILL", "JMP", "EOR", "LSR", "ILL",
+    "BVC", "EOR", "ILL", "ILL", "ILL", "EOR", "LSR", "ILL", "CLI", "EOR", "ILL", "ILL", "ILL", "EOR", "LSR", "ILL",
+    "RTS", "ADC", "ILL", "ILL", "ILL", "ADC", "ROR", "ILL", "PLA", "ADC", "ROR", "ILL", "JMP", "ADC", "ROR", "ILL",
+    "BVS", "ADC", "ILL", "ILL", "ILL", "ADC", "ROR", "ILL", "SEI", "ADC", "ILL", "ILL", "ILL", "ADC", "ROR", "ILL",
+    "ILL", "STA", "ILL", "ILL", "STY", "STA", "STX", "ILL", "DEY", "ILL", "TXA", "ILL", "STY", "STA", "STX", "ILL",
+    "BCC", "STA", "ILL", "ILL", "STY", "STA", "STX", "ILL", "TYA", "STA", "TXS", "ILL", "ILL", "STA", "ILL", "ILL",
+    "LDY", "LDA", "LDX", "ILL", "LDY", "LDA", "LDX", "ILL", "TAY", "LDA", "TAX", "ILL", "LDY", "LDA", "LDX", "ILL",
+    "BCS", "LDA", "ILL", "ILL", "LDY", "LDA", "LDX", "ILL", "CLV", "LDA", "TSX", "ILL", "LDY", "LDA", "LDX", "ILL",
+    "CPY", "CMP", "ILL", "ILL", "CPY", "CMP", "DEC", "ILL", "INY", "CMP", "DEX", "ILL", "CPY", "CMP", "DEC", "ILL",
+    "BNE", "CMP", "ILL", "ILL", "ILL", "CMP", "DEC", "ILL", "CLD", "CMP", "ILL", "ILL", "ILL", "CMP", "DEC", "ILL",
+    "CPX", "SBC", "ILL", "ILL", "CPX", "SBC", "INC", "ILL", "INX", "SBC", "NOP", "ILL", "CPX", "SBC", "INC", "ILL",
+    "BEQ", "SBC", "ILL", "ILL", "ILL", "SBC", "INC", "ILL", "SED", "SBC", "ILL", "ILL", "ILL", "SBC", "INC", "ILL"
 };
 
 inline void update_controller1(u8 state) {
@@ -124,7 +143,7 @@ u8 cpu_read_byte(u16 addr) {
     }
 
     printf("cpu_read_byte: %04x out of range\n", addr);
-    // exit(1);
+    exit(1);
     return 0;
 }
 
@@ -205,11 +224,18 @@ inline u8 absolute_y(u16 addr) {
 }
 
 inline u16 indirect_x_addr(u8 addr) {
-    return cpu_read_word(addr + x);
+    // zero page wrap around
+    u8 base_addr = addr + x;
+    u16 low_byte = (u16)cpu_read_byte(base_addr);
+    u16 high_byte = (u16)(((u16)cpu_read_byte(base_addr + 1)) << 8);
+    return high_byte | low_byte;
 }
 
 inline u16 indirect_y_addr(u8 addr) {
-    return cpu_read_word(addr) + y;
+    // zero page wrap around
+    u16 low_byte = (u16)cpu_read_byte(addr);
+    u16 high_byte = (u16)(((u16)cpu_read_byte(addr + 1)) << 8);
+    return (high_byte | low_byte) + (u16)y;
 }
 
 inline u8 indirect_x_val(u8 addr) {
@@ -274,7 +300,7 @@ void cpu_set_flags(u8 flags) {
 
 usize cpu_step(void) {
     u8 opcode = cpu_read_byte(pc);
-    // printf("PC: %04X, opcode: %02X, A: %02X, X: %02X, Y: %02X, SP: %02X\n", pc, opcode, a, x, y, sp);
+    // printf("PC: %04X, %s, opcode: %02X, A: %02X, X: %02X, Y: %02X, SP: %02X\n", pc, INST_OPCODES[opcode], opcode, a, x, y, sp);
     pc++;
 
     switch (opcode) {

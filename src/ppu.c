@@ -32,9 +32,10 @@ bool opaque_bg_mask[SCREEN_WIDTH * SCREEN_HEIGHT];
 usize scanlines;
 usize dots;
 usize frame_count;
+CartMetadata cart;
 
 // 64 RGB colors
-u8 COLOR_PALETTE[] = {
+const u8 COLOR_PALETTE[] = {
    0x80, 0x80, 0x80, 0x00, 0x3D, 0xA6, 0x00, 0x12, 0xB0, 0x44, 0x00, 0x96, 0xA1, 0x00, 0x5E,
    0xC7, 0x00, 0x28, 0xBA, 0x06, 0x00, 0x8C, 0x17, 0x00, 0x5C, 0x2F, 0x00, 0x10, 0x45, 0x00,
    0x05, 0x4A, 0x00, 0x00, 0x47, 0x2E, 0x00, 0x41, 0x66, 0x00, 0x00, 0x00, 0x05, 0x05, 0x05,
@@ -58,12 +59,13 @@ void clear_bg_mask(void) {
     memset(opaque_bg_mask, false, SCREEN_WIDTH * SCREEN_HEIGHT);
 }
 
-void ppu_init(u8* chr) {
+void ppu_init(u8* chr, CartMetadata cart_metadata) {
     chr_rom = chr;
     clear_frame();
     scanlines = 0;
     dots = 0;
     frame_count = 0;
+    cart = cart_metadata;
 }
 
 void ppu_free(void) {
@@ -403,6 +405,13 @@ bool ppu_step(usize cycles) {
             if (scanlines > 261) {
                 ppu_status &= ~(PPU_STATUS_VBLANK | PPU_STATUS_SPRITE0_HIT | PPU_STATUS_SPRITE_OVERFLOW);
                 scanlines = 0;
+
+                if (cart.reset_nametable_hack) {
+                    // The status bar in Super Mario Bros flickers because of inaccurate scrolling handling
+                    // this hack fixes this without requiring expensive scrolling computations
+                    // see https://forums.nesdev.org/viewtopic.php?f=3&t=10762
+                    ppu_ctrl &= ~PPU_CTRL_BASE_NAMETABLE_ADDR;
+                }
             }
         }
     }

@@ -4,10 +4,9 @@
 #include "cpu.h"
 #include "ppu.h"
 #include "apu.h"
-#include "ines.h"
+#include "cart.h"
 
 #define INES_HEADER_SIZE 16
-#define ROM_PATH "/Volumes/S/keep/roms/nes/Super Mario Bros.nes"
 #define AUDIO_SAMPLE_RATE 48000
 #define SCALE_FACTOR 2
 #define WINDOW_WIDTH (SCREEN_WIDTH * SCALE_FACTOR)
@@ -64,11 +63,11 @@ void handle_inputs(int gamepad) {
     update_controller1(state);
 }
 
-void nes_init(void) {
+void nes_init(const char* rom_path) {
     // load ROM
-    FILE* rom_file = fopen(ROM_PATH, "rb");
+    FILE* rom_file = fopen(rom_path, "rb");
     if (!rom_file) {
-        printf("Failed to open ROM file\n");
+        printf("Failed to open ROM file: %s\n", rom_path);
         exit(1);
     }
 
@@ -91,17 +90,17 @@ void nes_init(void) {
     usize prg_rom_size = ines.prg_banks * 16 * 1024;
     u8* prg_rom = (u8*)malloc(prg_rom_size);
     fread(prg_rom, 1, prg_rom_size, rom_file);
+    CartMetadata cart = cart_create(ines, prg_rom, prg_rom_size);
 
     // read CHR ROM
     usize chr_rom_size = ines.chr_banks * 8 * 1024;
     u8* chr_rom = (u8*)malloc(chr_rom_size);
     fread(chr_rom, 1, chr_rom_size, rom_file);
-
     fclose(rom_file);
 
     // initialize CPU, PPU and APU
     cpu_init(prg_rom, prg_rom_size);
-    ppu_init(chr_rom);
+    ppu_init(chr_rom, cart);
     apu_init(AUDIO_SAMPLE_RATE);
 }
 
@@ -128,8 +127,13 @@ void audio_input_callback(void* output_buffer, unsigned int frames) {
     apu_fill_buffer(samples, (usize)frames);
 }
 
-int main(void) {
-    nes_init();
+int main(int argc, char* argv[]) {
+    if (argc < 2) {
+        printf("Usage: %s <rom_path>\n", argv[0]);
+        return 1;
+    }
+
+    nes_init(argv[1]);
 
     SetTargetFPS(60);
     SetConfigFlags(FLAG_VSYNC_HINT);

@@ -38,9 +38,6 @@ void cpu_write_word(u16 addr, u16 value);
 u8 cpu_next_byte(void);
 u16 cpu_next_word(void);
 
-u8 next_byte(void);
-u16 next_word(void);
-
 // controllers
 extern u8 controller1_state;
 void update_controller1(u8 state);
