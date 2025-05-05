@@ -7,7 +7,7 @@
 #include "cart.h"
 
 #define INES_HEADER_SIZE 16
-#define AUDIO_SAMPLE_RATE 48000
+#define AUDIO_SAMPLE_RATE 44100
 #define SCALE_FACTOR 2
 #define WINDOW_WIDTH (SCREEN_WIDTH * SCALE_FACTOR)
 #define WINDOW_HEIGHT (SCREEN_HEIGHT * SCALE_FACTOR)
@@ -80,6 +80,14 @@ void nes_init(const char* rom_path) {
     fread(header, 1, INES_HEADER_SIZE, rom_file);
     INES ines = ines_parse(header);
     ines_print(ines);
+
+    if (!ines_is_supported(ines)) {
+        printf("Unsupported mapper: %d\n", ines.mapper_type);
+        fclose(rom_file);
+        exit(1);
+    }
+
+    printf("ines version: %d\n", ines.is_ines_2);
 
     if (ines.trainer) {
         // skip trainer data

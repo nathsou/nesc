@@ -18,6 +18,7 @@ INES ines_parse(u8* header) {
     ines.mirroring_y = (header[6] & 0x02) != 0;
     ines.battery = (header[6] & 0x04) != 0;
     ines.trainer = (header[6] & 0x08) != 0;
+    ines.is_ines_2 = (header[7] & 0x0C) == 0x08;
 
     return ines;
 }
@@ -29,4 +30,8 @@ void ines_print(INES ines) {
     printf("Mirroring: %s\n", ines.mirroring_x ? "Horizontal" : "Vertical");
     printf("Battery: %s\n", ines.battery ? "Yes" : "No");
     printf("Trainer: %s\n", ines.trainer ? "Yes" : "No");
+}
+
+bool ines_is_supported(INES ines) {
+    return ines.mapper_type == 0;
 }
