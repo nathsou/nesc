@@ -160,6 +160,8 @@ inline void sty_abs_x(u16 addr) {
 inline void adc_imm(u8 value) {
     u16 sum = a + value + (carry_flag ? 1 : 0);
     carry_flag = sum > 0xff;
+    // http://www.6502.org/tutorials/vflag.html
+    overflow_flag = (value ^ sum) & (sum ^ a) & 0x80 != 0;
     a = (u8)sum;
     cpu_update_nz(a);
 }
@@ -201,7 +203,9 @@ inline void adc_indy(u8 addr) {
 inline void sbc_imm(u8 value) {
     u16 diff = a - value - (carry_flag ? 0 : 1);
     carry_flag = diff <= 0xff;
-    a = diff & 0xff;
+    u8 sum = diff & 0xff;
+    overflow_flag = (a ^ value) & (a ^ sum) & 0x80 == 0x80;
+    a = sum;
     cpu_update_nz(a);
 }
 
@@ -648,6 +652,7 @@ inline void pla(void) {
 
 inline void _bit(u8 val) {
     zero_flag = (a & val) == 0;
+    overflow_flag = val & 0x40;
     neg_flag = val & 0x80;
 }
 
@@ -724,7 +729,7 @@ inline void ror_acc(void) {
 }
 
 void ror_zp(u8 addr) {
-    _ror(zero_page(addr));
+    _ror(addr);
 }
 
 void ror_zpx(u8 addr) {
@@ -794,12 +799,12 @@ void nmi(void) {
     php();
     sei();
     pc = cpu_read_word(CPU_NMI_VECTOR);
-    cycles += 7;
+    cpu_inst_cycles += 7;
 }
 
 void irq(void) {
     brk();
-    cycles += 7;
+    cpu_inst_cycles += 7;
 }
 
 inline void nop(void) {}
@@ -824,7 +829,7 @@ inline void branch_rel(u8 offset) {
     u16 jump_addr = (u16)((s16)pc + (s16)rel);
     u16 prev_pc = pc;
     pc = jump_addr;
-    cycles += 1 + page_boundary_crossed(prev_pc, jump_addr);
+    cpu_inst_cycles += 1 + page_boundary_crossed(prev_pc, jump_addr);
 }
 
 void bcc_rel(u8 offset) {

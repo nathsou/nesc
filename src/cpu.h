@@ -27,7 +27,7 @@ extern bool carry_flag, zero_flag, neg_flag, overflow_flag, brk_flag, interrupt_
 // memory
 extern u8 ram[0x800]; // 2KB
 
-extern usize cycles;
+extern usize cpu_inst_cycles, cpu_total_cycles, cpu_stall_cycles;
 
 u8 cpu_read_byte(u16 addr);
 void cpu_write_byte(u16 addr, u8 value);

@@ -25,7 +25,9 @@ u8 prg_ram[2 * 1024];
 u8 controller1_state;
 bool controller1_strobe;
 u8 controller1_btn_index;
-usize cycles;
+usize cpu_inst_cycles;
+usize cpu_stall_cycles;
+usize cpu_total_cycles;
 
 const usize INST_CYCLES[] = {
     7, 6, 2, 8, 3, 3, 5, 5, 3, 2, 2, 2, 4, 4, 6, 6, 2, 5, 2, 8, 4, 4, 6, 6, 2, 4, 2, 7, 4, 4, 7, 7,
@@ -85,7 +87,9 @@ void cpu_init(u8 *prg_rom, usize size) {
     controller1_strobe = false;
     controller1_btn_index = 0;
 
-    cycles = 0;
+    cpu_inst_cycles = 0;
+    cpu_total_cycles = 0;
+    cpu_stall_cycles = 0;
 }
 
 void cpu_free(void) {
@@ -299,8 +303,13 @@ void cpu_set_flags(u8 flags) {
 }
 
 usize cpu_step(void) {
+    if (cpu_stall_cycles > 0) {
+        cpu_stall_cycles--;
+        return 1;
+    }
+
     u8 opcode = cpu_read_byte(pc);
-    // printf("PC: %04X, %s, opcode: %02X, A: %02X, X: %02X, Y: %02X, SP: %02X\n", pc, INST_OPCODES[opcode], opcode, a, x, y, sp);
+    // printf("PC: %04X, A: %02X, X: %02X, Y: %02X, SP: %02X, c: %zu, f: %zu\n", pc, a, x, y, sp, total_cycles, frame_count);
     pc++;
 
     switch (opcode) {
@@ -461,10 +470,10 @@ usize cpu_step(void) {
             break;
     }
 
-    cycles += INST_CYCLES[opcode];
-    usize step_cycles = cycles;
-    cycles = 0;
+    cpu_inst_cycles += INST_CYCLES[opcode];
+    usize step_cycles = cpu_inst_cycles;
+    cpu_total_cycles += step_cycles;
+    cpu_inst_cycles = 0;
 
     return step_cycles;
 }
-

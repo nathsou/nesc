@@ -477,7 +477,6 @@ typedef struct {
     bool silence_flag;
     u8 output_bits_remaining;
     bool irq_enabled;
-    uint32_t cpu_stall;
     u16 memory_read_request;
     bool has_memory_request;
 } DeltaModulationChannel;
@@ -496,7 +495,6 @@ void dmc_init(DeltaModulationChannel* dmc) {
     dmc->silence_flag = false;
     dmc->output_bits_remaining = 0;
     dmc->irq_enabled = false;
-    dmc->cpu_stall = 0;
     dmc->has_memory_request = false;
 }
 
@@ -525,7 +523,7 @@ void dmc_step_shifter(DeltaModulationChannel* dmc) {
 
 void dmc_step_reader(DeltaModulationChannel* dmc) {
     if (dmc->output_bits_remaining == 0 && dmc->bytes_remaining > 0) {
-        dmc->cpu_stall += 4;
+        cpu_stall_cycles += 4;
         dmc->memory_read_request = dmc->current_addr;
         dmc->has_memory_request = true;
         dmc->output_bits_remaining = 8;

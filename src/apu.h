@@ -7,6 +7,7 @@
 #include <stdbool.h>
 #include <string.h>
 #include "types.h"
+#include "cpu.h"
 
 extern u8 audio_buffer[AUDIO_BUFFER_SIZE];
 // reserve space for the web audio buffer

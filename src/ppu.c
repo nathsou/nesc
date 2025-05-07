@@ -34,6 +34,9 @@ usize dots;
 usize frame_count;
 CartMetadata cart;
 
+bool nmi_edge_detector;
+bool should_trigger_nmi;
+
 // 64 RGB colors
 const u8 COLOR_PALETTE[] = {
    0x80, 0x80, 0x80, 0x00, 0x3D, 0xA6, 0x00, 0x12, 0xB0, 0x44, 0x00, 0x96, 0xA1, 0x00, 0x5E,
@@ -66,10 +69,22 @@ void ppu_init(u8* chr, CartMetadata cart_metadata) {
     dots = 0;
     frame_count = 0;
     cart = cart_metadata;
+    nmi_edge_detector = false;
+    should_trigger_nmi = false;
 }
 
 void ppu_free(void) {
     free(chr_rom);
+}
+
+void detect_nmi_edge(void) {
+    bool new_state = (ppu_ctrl & PPU_CTRL_NMI_ENABLE) && (ppu_status & PPU_STATUS_VBLANK);
+
+    if (!nmi_edge_detector && new_state) {
+        should_trigger_nmi = true;
+    }
+
+    nmi_edge_detector = new_state;
 }
 
 u8 ppu_read_register(u16 addr) {
@@ -78,6 +93,7 @@ u8 ppu_read_register(u16 addr) {
             ppu_w = 0;
             u8 status = ppu_status;
             ppu_status &= ~PPU_STATUS_VBLANK;
+            detect_nmi_edge();
             return status;
         }
         case 0x2004: {
@@ -96,18 +112,14 @@ u8 ppu_read_register(u16 addr) {
 
 void ppu_transfer_oam(u16 start_addr) {
     memcpy(oam, ram + start_addr, 256);
-    cycles += 513;
+    cpu_stall_cycles += 513 + (cpu_total_cycles & 1);
 }
 
 void ppu_write_register(u16 addr, u8 value) {
     switch (addr) {
         case 0x2000: {
-            bool prev_nmi = ppu_ctrl & PPU_CTRL_NMI_ENABLE;
             ppu_ctrl = value;
-
-            if (!prev_nmi && (value & PPU_CTRL_NMI_ENABLE) && (ppu_status & PPU_STATUS_VBLANK)) {
-                nmi();
-            }
+            detect_nmi_edge();
             break;
         }
         case 0x2001: {
@@ -363,6 +375,11 @@ inline bool sprite_zero_hit(void) {
 bool ppu_step(usize cycles) {
     bool new_frame = false;
 
+    if (should_trigger_nmi && (ppu_ctrl & PPU_CTRL_NMI_ENABLE) && (ppu_status & PPU_STATUS_VBLANK)) {
+        should_trigger_nmi = false;
+        nmi();
+    }
+
     for (usize i = 0; i < cycles; i++) {
         if (sprite_zero_hit()) {
             ppu_status |= PPU_STATUS_SPRITE0_HIT;
@@ -385,26 +402,17 @@ bool ppu_step(usize cycles) {
             render_row(scanlines / 8, nametable2_offset, bank_offset, SCREEN_WIDTH - (int)ppu_scroll_x, 0, ppu_scroll_x);
         }
 
-        dots++;
-
-        if (dots > 340) {
-            dots = 0;
-            scanlines++;
-
+        if (dots == 1) {
             if (scanlines == 241) {
                 new_frame = true;
                 frame_count++;
                 ppu_status |= PPU_STATUS_VBLANK;
-                ppu_status &= ~PPU_STATUS_SPRITE0_HIT;
-
-                if (ppu_ctrl & PPU_CTRL_NMI_ENABLE) {
-                    nmi();
-                }
-            }
-    
-            if (scanlines > 261) {
+                // ppu_status &= ~PPU_STATUS_SPRITE0_HIT;
+                detect_nmi_edge();
+            } else if (scanlines == 261) {
                 ppu_status &= ~(PPU_STATUS_VBLANK | PPU_STATUS_SPRITE0_HIT | PPU_STATUS_SPRITE_OVERFLOW);
                 scanlines = 0;
+                detect_nmi_edge();
 
                 if (cart.reset_nametable_hack) {
                     // The status bar in Super Mario Bros flickers because of inaccurate scrolling handling
@@ -413,6 +421,11 @@ bool ppu_step(usize cycles) {
                     ppu_ctrl &= ~PPU_CTRL_BASE_NAMETABLE_ADDR;
                 }
             }
+        }
+
+        if (++dots > 340) {
+            dots = 0;
+            scanlines++;
         }
     }
 

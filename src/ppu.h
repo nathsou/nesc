@@ -50,6 +50,7 @@ void ppu_transfer_oam(u16 start_addr);
 
 // screen
 extern u8 frame[SCREEN_WIDTH * SCREEN_HEIGHT * 3]; // 3 bytes per pixel (RGB)
+extern usize frame_count;
 
 void ppu_init(u8* chr, CartMetadata cart_metadata);
 void ppu_free(void);
