@@ -31,8 +31,8 @@ INES ines_parse(u8* header) {
     return ines;
 }
 
-char* ines_mirroring_show(INES ines) {
-    switch (ines.mirroring) {
+char* mirroring_show(NametableMirroring mirroring) {
+    switch (mirroring) {
         case NT_MIRRORING_HORIZONTAL:
             return "Horizontal";
         case NT_MIRRORING_VERTICAL:
@@ -52,7 +52,7 @@ void ines_print(INES ines) {
     printf("PRG banks: %d\n", ines.prg_banks);
     printf("CHR banks: %d\n", ines.chr_banks);
     printf("Mapper type: %d\n", ines.mapper_type);
-    printf("Mirroring: %s\n", ines_mirroring_show(ines));
+    printf("Mirroring: %s\n", mirroring_show(ines.mirroring));
     printf("Battery: %s\n", ines.battery ? "Yes" : "No");
     printf("Trainer: %s\n", ines.trainer ? "Yes" : "No");
 }

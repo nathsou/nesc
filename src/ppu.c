@@ -340,24 +340,10 @@ void draw_background_tile(
     }
 }
 
-void render_nametable(usize nametable_offset, usize bank_offset, int shift_x, int min_x, int max_x) {
-    usize start_x = !(ppu_mask & PPU_MASK_SHOW_BACKGROUND_LEFTMOST);
-
-    for (usize i = 0; i < TILES_PER_ROW * TILES_PER_COLUMN; i++) {
-        u8 tile_x = i % TILES_PER_ROW;
-        u8 tile_y = (u8)(i / TILES_PER_ROW);
-
-        u8 tile = nametable[nametable_offset + i];
-        usize palette_index = get_background_palette_index(tile_x, tile_y, nametable_offset);
-
-        draw_background_tile(tile, tile_x * 8, tile_y * 8, bank_offset, palette_index, shift_x, min_x, max_x);
-    }
-}
-
 void render_row(usize y, usize nametable_offset, usize bank_offset, int shift_x, int min_x, int max_x) {
     usize start_x = !(ppu_mask & PPU_MASK_SHOW_BACKGROUND_LEFTMOST);
 
-    for (usize i = 0; i < TILES_PER_ROW; i++) {
+    for (usize i = start_x; i < TILES_PER_ROW; i++) {
         u8 tile = nametable[nametable_offset + y * TILES_PER_ROW + i];
         usize palette_index = get_background_palette_index(i, y, nametable_offset);
 
@@ -523,7 +509,7 @@ bool ppu_step(usize cycles) {
                 new_frame = true;
                 frame_count++;
                 ppu_status |= PPU_STATUS_VBLANK;
-                // ppu_status &= ~PPU_STATUS_SPRITE0_HIT;
+                ppu_status &= ~PPU_STATUS_SPRITE0_HIT;
                 detect_nmi_edge();
             } else if (scanlines == 261) {
                 ppu_status &= ~(PPU_STATUS_VBLANK | PPU_STATUS_SPRITE0_HIT | PPU_STATUS_SPRITE_OVERFLOW);
@@ -535,6 +521,7 @@ bool ppu_step(usize cycles) {
                     // this hack fixes this without requiring expensive scrolling computations
                     // see https://forums.nesdev.org/viewtopic.php?f=3&t=10762
                     ppu_ctrl &= ~PPU_CTRL_BASE_NAMETABLE_ADDR;
+                    nametable_offsets = get_nametable_offsets(ppu_ctrl & PPU_CTRL_BASE_NAMETABLE_ADDR);
                 }
             }
         }
