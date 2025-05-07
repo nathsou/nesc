@@ -153,7 +153,7 @@ u8 cpu_read_byte(u16 addr) {
 
 void cpu_write_byte(u16 addr, u8 value) {
     if (addr < 0x2000) {
-        ram[addr & 0b0000011111111111] = value;
+        ram[addr & 0x7ff] = value;
     } else if (addr < 0x4000) {
         ppu_write_register(0x2000 + (addr & 7), value);
     } else if (addr == 0x4014) {
@@ -309,7 +309,7 @@ usize cpu_step(void) {
     }
 
     u8 opcode = cpu_read_byte(pc);
-    // printf("PC: %04X, A: %02X, X: %02X, Y: %02X, SP: %02X, c: %zu, f: %zu\n", pc, a, x, y, sp, total_cycles, frame_count);
+    // printf("PC: %04X, %s, A: %02X, X: %02X, Y: %02X, SP: %02X, c: %zu, f: %zu\n", pc, INST_OPCODES[opcode], a, x, y, sp, cpu_total_cycles, frame_count);
     pc++;
 
     switch (opcode) {

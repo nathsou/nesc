@@ -37,6 +37,13 @@ CartMetadata cart;
 bool nmi_edge_detector;
 bool should_trigger_nmi;
 
+typedef struct {
+    usize nametable1_offset;
+    usize nametable2_offset;
+} NametableOffsets;
+
+NametableOffsets nametable_offsets;
+
 // 64 RGB colors
 const u8 COLOR_PALETTE[] = {
    0x80, 0x80, 0x80, 0x00, 0x3D, 0xA6, 0x00, 0x12, 0xB0, 0x44, 0x00, 0x96, 0xA1, 0x00, 0x5E,
@@ -62,6 +69,8 @@ void clear_bg_mask(void) {
     memset(opaque_bg_mask, false, SCREEN_WIDTH * SCREEN_HEIGHT);
 }
 
+NametableOffsets get_nametable_offsets(u8 base_nametable);
+
 void ppu_init(u8* chr, CartMetadata cart_metadata) {
     chr_rom = chr;
     clear_frame();
@@ -71,6 +80,7 @@ void ppu_init(u8* chr, CartMetadata cart_metadata) {
     cart = cart_metadata;
     nmi_edge_detector = false;
     should_trigger_nmi = false;
+    nametable_offsets = get_nametable_offsets(ppu_ctrl & PPU_CTRL_BASE_NAMETABLE_ADDR);
 }
 
 void ppu_free(void) {
@@ -118,7 +128,13 @@ void ppu_transfer_oam(u16 start_addr) {
 void ppu_write_register(u16 addr, u8 value) {
     switch (addr) {
         case 0x2000: {
+            u8 prev_base_nametable = ppu_ctrl & PPU_CTRL_BASE_NAMETABLE_ADDR;
             ppu_ctrl = value;
+
+            if ((value & PPU_CTRL_BASE_NAMETABLE_ADDR) != prev_base_nametable) {
+                nametable_offsets = get_nametable_offsets(ppu_ctrl & PPU_CTRL_BASE_NAMETABLE_ADDR);
+            }
+
             detect_nmi_edge();
             break;
         }
@@ -166,6 +182,60 @@ void ppu_write_register(u16 addr, u8 value) {
     }
 }
 
+u16 nametable_mirrored_addr(u16 addr) {
+    addr &= 0x2fff;
+
+    switch (cart.header.mirroring) {
+        case NT_MIRRORING_HORIZONTAL:
+            if (addr >= 0x2000 && addr <= 0x23FF) {
+                return addr - 0x2000;                 // A
+            } else if (addr >= 0x2400 && addr <= 0x27FF) {
+                return addr - 0x2400;                 // A
+            } else if (addr >= 0x2800 && addr <= 0x2BFF) {
+                return addr - 0x2800 + 1024;          // B
+            } else {
+                return addr - 0x2C00 + 1024;          // B
+            }
+        case NT_MIRRORING_VERTICAL:
+            if (addr >= 0x2000 && addr <= 0x23FF) {
+                return addr - 0x2000;                 // A
+            } else if (addr >= 0x2400 && addr <= 0x27FF) {
+                return addr - 0x2400 + 1024;          // B
+            } else if (addr >= 0x2800 && addr <= 0x2BFF) {
+                return addr - 0x2800;                 // A
+            } else {
+                return addr - 0x2C00 + 1024;          // B
+            }
+        case NT_MIRRORING_ONE_SCREEN_LOWER_BANK:
+            if (addr >= 0x2000 && addr <= 0x23FF) {
+                return addr - 0x2000;                 // A
+            } else if (addr >= 0x2400 && addr <= 0x27FF) {
+                return addr - 0x2400;                 // A
+            } else if (addr >= 0x2800 && addr <= 0x2BFF) {
+                return addr - 0x2800;                 // A
+            } else {
+                return addr - 0x2C00;                 // A
+            }
+        case NT_MIRRORING_ONE_SCREEN_UPPER_BANK:
+            if (addr >= 0x2000 && addr <= 0x23FF) {
+                return addr - 0x2000 + 1024;          // B
+            } else if (addr >= 0x2400 && addr <= 0x27FF) {
+                return addr - 0x2400 + 1024;          // B
+            } else if (addr >= 0x2800 && addr <= 0x2BFF) {
+                return addr - 0x2800 + 1024;          // B
+            } else {
+                return addr - 0x2C00 + 1024;          // B
+            }
+        case NT_MIRRORING_FOUR_SCREEN:
+            return addr - 0x2000;
+    }
+
+    printf("Invalid nametable address: %04X\n", addr);
+    exit(1);
+
+    return 0;
+}
+
 // https://www.nesdev.org/wiki/PPU_memory_map
 u8 ppu_read(u16 addr) {
     if (addr < 0x2000) {
@@ -173,11 +243,11 @@ u8 ppu_read(u16 addr) {
     }
     
     if (addr < 0x3f00) {
-        return nametable[addr - 0x2000];
+        return nametable[nametable_mirrored_addr(addr)];
     }
 
     if (addr == 0x3f10 || addr == 0x3f14 || addr == 0x3f18 || addr == 0x3f1c) {
-        return palette_table[addr - 0x3f10];
+        return palette_table[(addr - 0x3f10) & 31];
     }
     
     if (addr < 0x4000) {
@@ -188,10 +258,12 @@ u8 ppu_read(u16 addr) {
 }
 
 void ppu_write(u16 addr, u8 value) {
-    if (addr >= 0x2000 && addr < 0x3f00) {
-        nametable[addr - 0x2000] = value;
+    if (addr < 0x2000) {
+        chr_rom[addr] = value;
+    } else if (addr >= 0x2000 && addr < 0x3f00) {
+        nametable[nametable_mirrored_addr(addr)] = value;
     } else if (addr == 0x3f10 || addr == 0x3f14 || addr == 0x3f18 || addr == 0x3f1c) {
-        palette_table[addr - 0x3f10] = value;
+        palette_table[(addr - 0x3f10) & 31] = value;
     } else if (addr < 0x4000) {
         palette_table[(addr - 0x3f00) & 31] = value;
     }
@@ -269,15 +341,11 @@ void draw_background_tile(
 }
 
 void render_nametable(usize nametable_offset, usize bank_offset, int shift_x, int min_x, int max_x) {
-    bool draw_leftmost_tile = ppu_mask & PPU_MASK_SHOW_BACKGROUND_LEFTMOST;
+    usize start_x = !(ppu_mask & PPU_MASK_SHOW_BACKGROUND_LEFTMOST);
 
     for (usize i = 0; i < TILES_PER_ROW * TILES_PER_COLUMN; i++) {
         u8 tile_x = i % TILES_PER_ROW;
         u8 tile_y = (u8)(i / TILES_PER_ROW);
-
-        if (!draw_leftmost_tile && tile_x == 0) {
-            continue;
-        }
 
         u8 tile = nametable[nametable_offset + i];
         usize palette_index = get_background_palette_index(tile_x, tile_y, nametable_offset);
@@ -287,13 +355,9 @@ void render_nametable(usize nametable_offset, usize bank_offset, int shift_x, in
 }
 
 void render_row(usize y, usize nametable_offset, usize bank_offset, int shift_x, int min_x, int max_x) {
-    bool draw_leftmost_tile = ppu_mask & PPU_MASK_SHOW_BACKGROUND_LEFTMOST;
+    usize start_x = !(ppu_mask & PPU_MASK_SHOW_BACKGROUND_LEFTMOST);
 
     for (usize i = 0; i < TILES_PER_ROW; i++) {
-        if (!draw_leftmost_tile && i == 0) {
-            continue;
-        }
-
         u8 tile = nametable[nametable_offset + y * TILES_PER_ROW + i];
         usize palette_index = get_background_palette_index(i, y, nametable_offset);
 
@@ -342,8 +406,8 @@ void draw_sprite_tile(
 
 void render_sprites(void) {
     // https://www.nesdev.org/wiki/PPU_OAM
-    usize bank_offset = ppu_ctrl & 0b1000 ? 0x1000 : 0;
-    bool draw_leftmost_tile = ppu_mask & 0b100;
+    usize bank_offset = ppu_ctrl & PPU_CTRL_SPRITE_PATTERN_TABLE ? 0x1000 : 0;
+    bool draw_leftmost_tile = ppu_mask & PPU_MASK_SHOW_SPRITES_LEFTMOST;
 
     // sprites with lower OAM indices are drawn in front
     for (int i = 252; i >= 0; i -= 4) {
@@ -372,6 +436,68 @@ inline bool sprite_zero_hit(void) {
     return (ppu_mask & (PPU_MASK_SHOW_SPRITES | PPU_MASK_SHOW_BACKGROUND)) && (sprite0_y == scanlines) && (sprite0_x == dots);
 }
 
+NametableOffsets get_nametable_offsets(u8 base_nametable) {
+    usize nametable1_offset, nametable2_offset;
+
+    switch (cart.header.mirroring) {
+        case NT_MIRRORING_VERTICAL: {
+            if ((base_nametable & 1) == 0) {
+                nametable1_offset = 0x000;
+                nametable2_offset = 0x400;
+            } else {
+                nametable1_offset = 0x400;
+                nametable2_offset = 0x000;
+            }
+            break;
+        }
+        case NT_MIRRORING_HORIZONTAL: {
+            switch (base_nametable) {
+                case 0:
+                case 1:
+                    nametable1_offset = 0x000;
+                    nametable2_offset = 0x400;
+                    break;
+                case 2:
+                case 3:
+                    nametable1_offset = 0x400;
+                    nametable2_offset = 0x000;
+                    break;
+            }
+            break;
+        }
+        case NT_MIRRORING_ONE_SCREEN_LOWER_BANK:
+            nametable1_offset = 0x000;
+            nametable2_offset = 0x000;
+            break;
+        case NT_MIRRORING_ONE_SCREEN_UPPER_BANK:
+            nametable1_offset = 0x400;
+            nametable2_offset = 0x400;
+            break;
+        case NT_MIRRORING_FOUR_SCREEN:
+            switch (base_nametable) {
+                case 0:
+                    nametable1_offset = 0x000;
+                    nametable2_offset = 0x400;
+                    break;
+                case 1:
+                    nametable1_offset = 0x400;
+                    nametable2_offset = 0x800;
+                    break;
+                case 2:
+                    nametable1_offset = 0x800;
+                    nametable2_offset = 0xc00;
+                    break;
+                case 3:
+                    nametable1_offset = 0xc00;
+                    nametable2_offset = 0x800;
+                    break;
+            }
+            break;
+    }
+
+    return (NametableOffsets) { nametable1_offset, nametable2_offset };
+}
+
 bool ppu_step(usize cycles) {
     bool new_frame = false;
 
@@ -387,19 +513,9 @@ bool ppu_step(usize cycles) {
 
         if (scanlines < 240 && dots == 256 && (ppu_mask & PPU_MASK_SHOW_BACKGROUND) && (scanlines & 7) == 0) {
             usize bank_offset = (ppu_ctrl & PPU_CTRL_BACKGROUND_PATTERN_TABLE) ? 0x1000 : 0;
-            usize nametable1_offset, nametable2_offset;
-        
-            // vertical mirroring
-            if (ppu_ctrl & PPU_CTRL_BASE_NAMETABLE_ADDR) {
-                nametable1_offset = 0x400;
-                nametable2_offset = 0x000;
-            } else {
-                nametable1_offset = 0x000;
-                nametable2_offset = 0x400;
-            }
-        
-            render_row(scanlines / 8, nametable1_offset, bank_offset, -((int)ppu_scroll_x), ppu_scroll_x, SCREEN_WIDTH);
-            render_row(scanlines / 8, nametable2_offset, bank_offset, SCREEN_WIDTH - (int)ppu_scroll_x, 0, ppu_scroll_x);
+            usize row = scanlines >> 3;
+            render_row(row, nametable_offsets.nametable1_offset, bank_offset, -((int)ppu_scroll_x), ppu_scroll_x, SCREEN_WIDTH);
+            render_row(row, nametable_offsets.nametable2_offset, bank_offset, SCREEN_WIDTH - (int)ppu_scroll_x, 0, ppu_scroll_x);
         }
 
         if (dots == 1) {
