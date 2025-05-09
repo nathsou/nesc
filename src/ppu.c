@@ -382,7 +382,7 @@ void draw_sprite_tile(
 
                 bool is_hidden = behind_bg && opaque_bg_mask[screen_y * SCREEN_WIDTH + screen_x];
 
-                if (!is_hidden && screen_x < SCREEN_WIDTH) {
+                if (!is_hidden) {
                     set_pixel(screen_x, screen_y, palette_offset);
                 }
             }
@@ -397,8 +397,8 @@ void render_sprites(void) {
 
     // sprites with lower OAM indices are drawn in front
     for (int i = 252; i >= 0; i -= 4) {
-        u8 x = oam[i + 3];
-        u8 y = oam[i] + 1;
+        usize x = (usize)oam[i + 3];
+        usize y = (usize)oam[i] + 1;
 
         if (!draw_leftmost_tile && x == 0) {
             continue;

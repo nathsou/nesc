@@ -3,3 +3,4 @@ nesc
 *.fdb
 .DS_Store
 *.dSYM
+.idea
