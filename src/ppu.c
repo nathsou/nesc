@@ -1,48 +1,9 @@
 #include "ppu.h"
-#include "cpu.h"
 
 #define SPRITES_PALETTES_OFFSET 0x11
 #define BYTES_PER_PALETTE 4
 #define TILES_PER_ROW 32
 #define TILES_PER_COLUMN 30
-
-u8* chr_rom;
-u8 nametable[2048];
-u8 palette_table[32];
-u8 oam[256];
-
-u16 ppu_v;
-u8 ppu_w;
-u8 ppu_f;
-
-u8 ppu_ctrl;
-u8 ppu_mask;
-u8 ppu_status;
-u8 oam_addr;
-u8 ppu_scroll_x;
-u8 ppu_scroll_y;
-
-u16 vram_addr;
-u8 vram_internal_buffer;
-u8 oam_dma;
-
-u8 frame[SCREEN_WIDTH * SCREEN_HEIGHT * 3];
-bool opaque_bg_mask[SCREEN_WIDTH * SCREEN_HEIGHT];
-
-usize scanlines;
-usize dots;
-usize frame_count;
-CartMetadata cart;
-
-bool nmi_edge_detector;
-bool should_trigger_nmi;
-
-typedef struct {
-    usize nametable1_offset;
-    usize nametable2_offset;
-} NametableOffsets;
-
-NametableOffsets nametable_offsets;
 
 // 64 RGB colors
 const u8 COLOR_PALETTE[] = {
@@ -61,131 +22,136 @@ const u8 COLOR_PALETTE[] = {
    0x99, 0xFF, 0xFC, 0xDD, 0xDD, 0xDD, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
 };
 
-void clear_frame(void) {
-    memset(frame, 0, SCREEN_WIDTH * SCREEN_HEIGHT * 3);
+inline void ppu_clear_frame(PPU* self) {
+    memset(self->frame, 0, sizeof(self->frame));
 }
 
-void clear_bg_mask(void) {
-    memset(opaque_bg_mask, false, SCREEN_WIDTH * SCREEN_HEIGHT);
+inline void ppu_clear_bg_mask(PPU* self) {
+    memset(self->opaque_bg_mask, false, sizeof(self->opaque_bg_mask));
 }
 
-NametableOffsets get_nametable_offsets(u8 base_nametable);
+NametableOffsets ppu_get_nametable_offsets(PPU* self, u8 base_nametable);
 
-void ppu_init(u8* chr, CartMetadata cart_metadata) {
-    chr_rom = chr;
-    clear_frame();
-    scanlines = 0;
-    dots = 0;
-    frame_count = 0;
-    cart = cart_metadata;
-    nmi_edge_detector = false;
-    should_trigger_nmi = false;
-    nametable_offsets = get_nametable_offsets(ppu_ctrl & PPU_CTRL_BASE_NAMETABLE_ADDR);
+void ppu_init(PPU* self, Cart cart) {
+    self->scanlines = 0;
+    self->dots = 0;
+    self->frame_count = 0;
+    self->cart = cart;
+    memset(self->nametable, 0, sizeof(self->nametable));
+    memset(self->palette_table, 0, sizeof(self->palette_table));
+    memset(self->oam, 0, sizeof(self->oam));
+    self->ctrl_reg = 0;
+    self->mask_reg = 0;
+    self->status_reg = 0;
+    self->oam_addr_reg = 0;
+    self->scroll_x = 0;
+    self->scroll_y = 0;
+    self->vram_addr = 0;
+    self->vram_internal_buffer = 0;
+    self->write_toggle = false;
+    self->oam_dma = 0;
+    self->nametable_offsets = ppu_get_nametable_offsets(self, self->ctrl_reg & PPU_CTRL_BASE_NAMETABLE_ADDR);
+    self->nmi_edge_detector = false;
+    self->should_trigger_nmi = false;
+    self->nmi_triggered = false;
+    ppu_clear_frame(self);
+    ppu_clear_bg_mask(self);
 }
 
-void ppu_free(void) {
-    free(chr_rom);
-}
+void ppu_free(PPU* self) {}
 
-void detect_nmi_edge(void) {
-    bool new_state = (ppu_ctrl & PPU_CTRL_NMI_ENABLE) && (ppu_status & PPU_STATUS_VBLANK);
+void ppu_detect_nmi_edge(PPU* self) {
+    bool new_state = (self->ctrl_reg & PPU_CTRL_NMI_ENABLE) && (self->status_reg & PPU_STATUS_VBLANK);
 
-    if (!nmi_edge_detector && new_state) {
-        should_trigger_nmi = true;
+    if (!self->nmi_edge_detector && new_state) {
+        self->should_trigger_nmi = true;
     }
 
-    nmi_edge_detector = new_state;
+    self->nmi_edge_detector = new_state;
 }
 
-u8 ppu_read_register(u16 addr) {
+u8 ppu_read_register(PPU* self, u16 addr) {
     switch (addr) {
         case 0x2002: {
-            ppu_w = 0;
-            u8 status = ppu_status;
-            ppu_status &= ~PPU_STATUS_VBLANK;
-            detect_nmi_edge();
+            self->write_toggle = false;
+            u8 status = self->status_reg;
+            self->status_reg &= ~PPU_STATUS_VBLANK;
+            ppu_detect_nmi_edge(self);
             return status;
         }
         case 0x2004: {
-            return oam[oam_addr];
+            return self->oam[self->oam_addr_reg];
         }
         case 0x2007: {
-            u8 value = vram_internal_buffer;
-            vram_internal_buffer = ppu_read(vram_addr);
-            u16 increment = ppu_ctrl & 0b100 ? 32 : 1;
-            vram_addr += increment;
+            u8 value = self->vram_internal_buffer;
+            self->vram_internal_buffer = ppu_read(self, self->vram_addr);
+            self->vram_addr += self->ctrl_reg & PPU_CTRL_VRAM_INCREMENT ? 32 : 1;
             return value;
         }
         default: return 0;
     }
 }
 
-void ppu_transfer_oam(u16 start_addr) {
-    memcpy(oam, ram + start_addr, 256);
-    cpu_stall_cycles += 513 + (cpu_total_cycles & 1);
-}
-
-void ppu_write_register(u16 addr, u8 value) {
+void ppu_write_register(PPU* self, u16 addr, u8 value) {
     switch (addr) {
         case 0x2000: {
-            u8 prev_base_nametable = ppu_ctrl & PPU_CTRL_BASE_NAMETABLE_ADDR;
-            ppu_ctrl = value;
+            u8 prev_base_nametable = self->ctrl_reg & PPU_CTRL_BASE_NAMETABLE_ADDR;
+            self->ctrl_reg = value;
 
             if ((value & PPU_CTRL_BASE_NAMETABLE_ADDR) != prev_base_nametable) {
-                nametable_offsets = get_nametable_offsets(ppu_ctrl & PPU_CTRL_BASE_NAMETABLE_ADDR);
+                self->nametable_offsets = ppu_get_nametable_offsets(self, self->ctrl_reg & PPU_CTRL_BASE_NAMETABLE_ADDR);
             }
 
-            detect_nmi_edge();
+            ppu_detect_nmi_edge(self);
             break;
         }
         case 0x2001: {
-            ppu_mask = value;
+            self->mask_reg = value;
             break;
         }
         case 0x2003: {
-            oam_addr = value;
+            self->oam_addr_reg = value;
             break;
         }
         case 0x2004: {
-            oam[oam_addr] = value;
-            oam_addr++;
+            self->oam[self->oam_addr_reg] = value;
+            self->oam_addr_reg++;
             break;
         }
         case 0x2005: {
-            if (!ppu_w) {
-                ppu_scroll_x = value;
-                ppu_w = 1;
+            if (self->write_toggle) {
+                self->scroll_y = value;
             } else {
-                ppu_scroll_y = value;
-                ppu_w = 0;
+                self->scroll_x = value;
             }
+
+            self->write_toggle = !self->write_toggle;
             break;
         }
         case 0x2006: {
-            if (ppu_w) {
+            if (self->write_toggle) {
                 // low byte
-                vram_addr = (vram_addr & 0xff00) | value;
-                ppu_w = 0;
+                self->vram_addr = (self->vram_addr & 0xff00) | value;
             } else {
                 // high byte
-                vram_addr = ((((u16)value) << 8) & 0xff00) | (vram_addr & 0xff);
-                ppu_w = 1;
+                self->vram_addr = ((((u16)value) << 8) & 0xff00) | (self->vram_addr & 0xff);
             }
+
+            self->write_toggle = !self->write_toggle;
             break;
         }
         case 0x2007: {
-            ppu_write(vram_addr, value);
-            u16 increment = ppu_ctrl & 0b100 ? 32 : 1;
-            vram_addr += increment;
+            ppu_write(self, self->vram_addr, value);
+            self->vram_addr += self->ctrl_reg & PPU_CTRL_VRAM_INCREMENT ? 32 : 1;
             break;
         }
     }
 }
 
-u16 nametable_mirrored_addr(u16 addr) {
+u16 ppu_nametable_mirrored_addr(PPU* self, u16 addr) {
     addr &= 0x2fff;
 
-    switch (cart.header.mirroring) {
+    switch (self->cart.header.mirroring) {
         case NT_MIRRORING_HORIZONTAL:
             if (addr >= 0x2000 && addr <= 0x23FF) {
                 return addr - 0x2000;                 // A
@@ -237,39 +203,39 @@ u16 nametable_mirrored_addr(u16 addr) {
 }
 
 // https://www.nesdev.org/wiki/PPU_memory_map
-u8 ppu_read(u16 addr) {
+u8 ppu_read(PPU* self, u16 addr) {
     if (addr < 0x2000) {
-        return chr_rom[addr];
+        return self->cart.chr_rom[addr];
     }
     
     if (addr < 0x3f00) {
-        return nametable[nametable_mirrored_addr(addr)];
+        return self->nametable[ppu_nametable_mirrored_addr(self, addr)];
     }
 
     if (addr == 0x3f10 || addr == 0x3f14 || addr == 0x3f18 || addr == 0x3f1c) {
-        return palette_table[(addr - 0x3f10) & 31];
+        return self->palette_table[(addr - 0x3f10) & 31];
     }
     
     if (addr < 0x4000) {
-        return palette_table[(addr - 0x3f00) & 31];
+        return self->palette_table[(addr - 0x3f00) & 31];
     }
 
     return 0;
 }
 
-void ppu_write(u16 addr, u8 value) {
+void ppu_write(PPU* self, u16 addr, u8 value) {
     if (addr < 0x2000) {
-        chr_rom[addr] = value;
+        self->cart.chr_rom[addr] = value;
     } else if (addr >= 0x2000 && addr < 0x3f00) {
-        nametable[nametable_mirrored_addr(addr)] = value;
+        self->nametable[ppu_nametable_mirrored_addr(self, addr)] = value;
     } else if (addr == 0x3f10 || addr == 0x3f14 || addr == 0x3f18 || addr == 0x3f1c) {
-        palette_table[(addr - 0x3f10) & 31] = value;
+        self->palette_table[(addr - 0x3f10) & 31] = value;
     } else if (addr < 0x4000) {
-        palette_table[(addr - 0x3f00) & 31] = value;
+        self->palette_table[(addr - 0x3f00) & 31] = value;
     }
 }
 
-void set_pixel(usize x, usize y, u8 palette_color) {
+void ppu_set_pixel(PPU* self, usize x, usize y, u8 palette_color) {
     usize index = (y * SCREEN_WIDTH + x) * 3;
 
     if (index < SCREEN_WIDTH * SCREEN_HEIGHT * 3) {
@@ -277,16 +243,16 @@ void set_pixel(usize x, usize y, u8 palette_color) {
         u8 g = COLOR_PALETTE[palette_color * 3 + 1];
         u8 b = COLOR_PALETTE[palette_color * 3 + 2];
 
-        frame[index] = r;
-        frame[index + 1] = g;
-        frame[index + 2] = b;
+        self->frame[index] = r;
+        self->frame[index + 1] = g;
+        self->frame[index + 2] = b;
     }
 }
 
-usize get_background_palette_index(usize tile_col, usize tile_row, usize nametable_offset) {
+usize ppu_get_background_palette_index(PPU* self, usize tile_col, usize tile_row, usize nametable_offset) {
     usize attr_table_index = (tile_row / 4) * 8 + (tile_col / 4);
     // the attribute table is stored after the nametable (960 bytes)
-    usize attr_table_byte = nametable[nametable_offset + 960 + attr_table_index];
+    usize attr_table_byte = self->nametable[nametable_offset + 960 + attr_table_index];
     usize block_x = (tile_col % 4) / 2;
     usize block_y = (tile_row % 4) / 2;
     usize shift = block_y * 4 + block_x * 2;
@@ -294,7 +260,8 @@ usize get_background_palette_index(usize tile_col, usize tile_row, usize nametab
     return ((attr_table_byte >> shift) & 0b11) * BYTES_PER_PALETTE;
 }
 
-void draw_background_tile(
+void ppu_draw_background_tile(
+    PPU* self,
     usize n,
     usize x,
     usize y,
@@ -305,8 +272,9 @@ void draw_background_tile(
     int max_x
 ) {
     for (usize tile_y = 0; tile_y < 8; tile_y++) {
-        u8 plane1 = chr_rom[bank_offset + n * 16 + tile_y];
-        u8 plane2 = chr_rom[bank_offset + n * 16 + tile_y + 8];
+        usize chr_rom_offset = bank_offset + n * 16 + tile_y;
+        u8 plane1 = self->cart.chr_rom[chr_rom_offset];
+        u8 plane2 = self->cart.chr_rom[chr_rom_offset + 8];
 
         for (usize tile_x = 0; tile_x < 8; tile_x++) {
             u8 bit0 = plane1 & 1;
@@ -320,9 +288,9 @@ void draw_background_tile(
             bool is_universal_bg_color = color_index == 0;
 
             if (is_universal_bg_color) {
-                palette_offset = palette_table[0];
+                palette_offset = self->palette_table[0];
             } else {
-                palette_offset = palette_table[palette_idx + color_index];
+                palette_offset = self->palette_table[palette_idx + color_index];
             }
 
             int nametable_x = (int)x + ((int)(7 - (int)tile_x));
@@ -330,28 +298,28 @@ void draw_background_tile(
             if (nametable_x >= min_x && nametable_x < max_x) {
                 usize screen_x = (usize)(shift_x + nametable_x);
                 usize screen_y = y + tile_y;
-                set_pixel(screen_x, screen_y, palette_offset);
+                ppu_set_pixel(self, screen_x, screen_y, palette_offset);
 
                 if (!is_universal_bg_color && screen_x >= 0 && screen_x < SCREEN_WIDTH) {
-                    opaque_bg_mask[screen_y * SCREEN_WIDTH + screen_x] = true;
+                    self->opaque_bg_mask[screen_y * SCREEN_WIDTH + screen_x] = true;
                 }
             }
         }
     }
 }
 
-void render_row(usize y, usize nametable_offset, usize bank_offset, int shift_x, int min_x, int max_x) {
-    usize start_x = !(ppu_mask & PPU_MASK_SHOW_BACKGROUND_LEFTMOST);
+void ppu_render_row(PPU* self, usize y, usize nametable_offset, usize bank_offset, int shift_x, int min_x, int max_x) {
+    usize start_x = !(self->mask_reg & PPU_MASK_SHOW_BACKGROUND_LEFTMOST);
 
     for (usize i = start_x; i < TILES_PER_ROW; i++) {
-        u8 tile = nametable[nametable_offset + y * TILES_PER_ROW + i];
-        usize palette_index = get_background_palette_index(i, y, nametable_offset);
-
-        draw_background_tile(tile, i * 8, y * 8, bank_offset, palette_index, shift_x, min_x, max_x);
+        u8 tile = self->nametable[nametable_offset + y * TILES_PER_ROW + i];
+        usize palette_index = ppu_get_background_palette_index(self, i, y, nametable_offset);
+        ppu_draw_background_tile(self, tile, i * 8, y * 8, bank_offset, palette_index, shift_x, min_x, max_x);
     }
 }
 
-void draw_sprite_tile(
+void ppu_draw_sprite_tile(
+    PPU* self,
     usize n,
     usize x,
     usize y,
@@ -362,8 +330,9 @@ void draw_sprite_tile(
     bool behind_bg
 ) {
     for (usize tile_y = 0; tile_y < 8; tile_y++) {
-        u8 plane1 = chr_rom[bank_offset + n * 16 + tile_y];
-        u8 plane2 = chr_rom[bank_offset + n * 16 + tile_y + 8];
+        usize chr_rom_offset = bank_offset + n * 16 + tile_y;
+        u8 plane1 = self->cart.chr_rom[chr_rom_offset];
+        u8 plane2 = self->cart.chr_rom[chr_rom_offset + 8];
 
         for (usize tile_x = 0; tile_x < 8; tile_x++) {
             u8 bit0 = plane1 & 1;
@@ -374,58 +343,57 @@ void draw_sprite_tile(
             plane2 >>= 1;
 
             if (color_index != 0) {
-                u8 palette_offset = palette_table[palette_idx + color_index - 1];
+                u8 palette_offset = self->palette_table[palette_idx + color_index - 1];
                 u8 flipped_x = (u8)(flip_x ? tile_x : 7 - tile_x);
                 u8 flipped_y = (u8)(flip_y ? 7 - tile_y : tile_y);
                 usize screen_x = x + flipped_x;
                 usize screen_y = y + flipped_y;
 
-                bool is_hidden = behind_bg && opaque_bg_mask[screen_y * SCREEN_WIDTH + screen_x];
+                bool is_hidden = behind_bg && self->opaque_bg_mask[screen_y * SCREEN_WIDTH + screen_x];
 
-                if (!is_hidden) {
-                    set_pixel(screen_x, screen_y, palette_offset);
+                if (!is_hidden && screen_x < SCREEN_WIDTH) {
+                    ppu_set_pixel(self, screen_x, screen_y, palette_offset);
                 }
             }
         }
     }
 }
 
-void render_sprites(void) {
+void ppu_render_sprites(PPU* self) {
     // https://www.nesdev.org/wiki/PPU_OAM
-    usize bank_offset = ppu_ctrl & PPU_CTRL_SPRITE_PATTERN_TABLE ? 0x1000 : 0;
-    bool draw_leftmost_tile = ppu_mask & PPU_MASK_SHOW_SPRITES_LEFTMOST;
+    usize bank_offset = self->ctrl_reg & PPU_CTRL_SPRITE_PATTERN_TABLE ? 0x1000 : 0;
+    bool draw_leftmost_tile = self->mask_reg & PPU_MASK_SHOW_SPRITES_LEFTMOST;
 
     // sprites with lower OAM indices are drawn in front
     for (int i = 252; i >= 0; i -= 4) {
-        usize x = (usize)oam[i + 3];
-        usize y = (usize)oam[i] + 1;
+        usize y = (usize)self->oam[i] + 1;
+        u8 tile = self->oam[i + 1];
+        u8 attr = self->oam[i + 2];
+        usize x = (usize)self->oam[i + 3];
 
-        if (!draw_leftmost_tile && x == 0) {
+        if ((!draw_leftmost_tile && x == 0) || (y == SCREEN_HEIGHT)) {
             continue;
         }
-
-        u8 tile = oam[i + 1];
-        u8 attr = oam[i + 2];
 
         bool flip_x = attr & 0b01000000;
         bool flip_y = attr & 0b10000000;
         bool behind_bg = attr & 0b00100000;
 
         u8 palette_index = SPRITES_PALETTES_OFFSET + (attr & 0b11) * BYTES_PER_PALETTE;
-        draw_sprite_tile(tile, x, y, bank_offset, palette_index, flip_x, flip_y, behind_bg);
+        ppu_draw_sprite_tile(self, tile, x, y, bank_offset, palette_index, flip_x, flip_y, behind_bg);
     }
 }
 
-inline bool sprite_zero_hit(void) {
-    u8 sprite0_y = oam[0];
-    u8 sprite0_x = oam[3];
-    return (ppu_mask & (PPU_MASK_SHOW_SPRITES | PPU_MASK_SHOW_BACKGROUND)) && (sprite0_y == scanlines) && (sprite0_x == dots);
+inline bool ppu_sprite_zero_hit(PPU* self) {
+    u8 sprite0_y = self->oam[0];
+    u8 sprite0_x = self->oam[3];
+    return (self->mask_reg & (PPU_MASK_SHOW_SPRITES | PPU_MASK_SHOW_BACKGROUND)) && (sprite0_y == self->scanlines) && (sprite0_x == self->dots);
 }
 
-NametableOffsets get_nametable_offsets(u8 base_nametable) {
+NametableOffsets ppu_get_nametable_offsets(PPU* self, u8 base_nametable) {
     usize nametable1_offset, nametable2_offset;
 
-    switch (cart.header.mirroring) {
+    switch (self->cart.header.mirroring) {
         case NT_MIRRORING_VERTICAL: {
             if ((base_nametable & 1) == 0) {
                 nametable1_offset = 0x000;
@@ -484,70 +452,69 @@ NametableOffsets get_nametable_offsets(u8 base_nametable) {
     return (NametableOffsets) { nametable1_offset, nametable2_offset };
 }
 
-bool ppu_step(usize cycles) {
+bool ppu_step(PPU* self, usize cycles) {
     bool new_frame = false;
 
-    if (should_trigger_nmi && (ppu_ctrl & PPU_CTRL_NMI_ENABLE) && (ppu_status & PPU_STATUS_VBLANK)) {
-        should_trigger_nmi = false;
-        nmi();
+    if (self->should_trigger_nmi && (self->ctrl_reg & PPU_CTRL_NMI_ENABLE) && (self->status_reg & PPU_STATUS_VBLANK)) {
+        self->should_trigger_nmi = false;
+        self->nmi_triggered = true;
     }
 
     for (usize i = 0; i < cycles; i++) {
-        if (sprite_zero_hit()) {
-            ppu_status |= PPU_STATUS_SPRITE0_HIT;
+        if (ppu_sprite_zero_hit(self)) {
+            self->status_reg |= PPU_STATUS_SPRITE0_HIT;
         }
 
-        if (scanlines < 240 && dots == 256 && (ppu_mask & PPU_MASK_SHOW_BACKGROUND) && (scanlines & 7) == 0) {
-            usize bank_offset = (ppu_ctrl & PPU_CTRL_BACKGROUND_PATTERN_TABLE) ? 0x1000 : 0;
-            usize row = scanlines >> 3;
-            render_row(row, nametable_offsets.nametable1_offset, bank_offset, -((int)ppu_scroll_x), ppu_scroll_x, SCREEN_WIDTH);
-            render_row(row, nametable_offsets.nametable2_offset, bank_offset, SCREEN_WIDTH - (int)ppu_scroll_x, 0, ppu_scroll_x);
+        if (self->scanlines < 240 && self->dots == 256 && (self->mask_reg & PPU_MASK_SHOW_BACKGROUND) && (self->scanlines & 7) == 0) {
+            usize bank_offset = (self->ctrl_reg & PPU_CTRL_BACKGROUND_PATTERN_TABLE) ? 0x1000 : 0;
+            usize row = self->scanlines >> 3;
+            ppu_render_row(self, row, self->nametable_offsets.nametable1_offset, bank_offset, -((int)self->scroll_x), self->scroll_x, SCREEN_WIDTH);
+            ppu_render_row(self, row, self->nametable_offsets.nametable2_offset, bank_offset, SCREEN_WIDTH - (int)self->scroll_x, 0, self->scroll_x);
         }
 
-        if (dots == 1) {
-            if (scanlines == 241) {
+        if (self->dots == 1) {
+            if (self->scanlines == 241) {
                 new_frame = true;
-                frame_count++;
-                ppu_status |= PPU_STATUS_VBLANK;
-                ppu_status &= ~PPU_STATUS_SPRITE0_HIT;
-                detect_nmi_edge();
-            } else if (scanlines == 261) {
-                ppu_status &= ~(PPU_STATUS_VBLANK | PPU_STATUS_SPRITE0_HIT | PPU_STATUS_SPRITE_OVERFLOW);
-                scanlines = 0;
-                detect_nmi_edge();
+                self->frame_count++;
+                self->status_reg |= PPU_STATUS_VBLANK;
+                self->status_reg &= ~PPU_STATUS_SPRITE0_HIT;
+                ppu_detect_nmi_edge(self);
+            } else if (self->scanlines == 261) {
+                self->status_reg &= ~(PPU_STATUS_VBLANK | PPU_STATUS_SPRITE0_HIT | PPU_STATUS_SPRITE_OVERFLOW);
+                self->scanlines = 0;
+                ppu_detect_nmi_edge(self);
 
-                if (cart.reset_nametable_hack) {
+                if (self->cart.reset_nametable_hack) {
                     // The status bar in Super Mario Bros flickers because of inaccurate scrolling handling
                     // this hack fixes this without requiring expensive scrolling computations
                     // see https://forums.nesdev.org/viewtopic.php?f=3&t=10762
-                    ppu_ctrl &= ~PPU_CTRL_BASE_NAMETABLE_ADDR;
-                    nametable_offsets = get_nametable_offsets(ppu_ctrl & PPU_CTRL_BASE_NAMETABLE_ADDR);
+                    self->ctrl_reg &= ~PPU_CTRL_BASE_NAMETABLE_ADDR;
+                    self->nametable_offsets = ppu_get_nametable_offsets(self, self->ctrl_reg & PPU_CTRL_BASE_NAMETABLE_ADDR);
                 }
             }
         }
 
-        if (++dots > 340) {
-            dots = 0;
-            scanlines++;
+        if (++self->dots > 340) {
+            self->dots = 0;
+            self->scanlines++;
         }
     }
 
     return new_frame;
 }
 
-void ppu_render(void) {
-    oam_addr = 0; // reset OAM address
-
-    bool render_bg = ppu_mask & PPU_MASK_SHOW_BACKGROUND;
-    bool render_sp = ppu_mask & PPU_MASK_SHOW_SPRITES;
+void ppu_render(PPU* self) {
+    self->oam_addr_reg = 0; // reset OAM address
+    bool render_bg = self->mask_reg & PPU_MASK_SHOW_BACKGROUND;
+    bool render_sp = self->mask_reg & PPU_MASK_SHOW_SPRITES;
 
     if (!render_bg) {
-        clear_frame();
+        ppu_clear_frame(self);
     }
 
     if (render_sp) {
-        render_sprites();
+        ppu_render_sprites(self);
     }
     
-    clear_bg_mask();
+    ppu_clear_bg_mask(self);
 }

@@ -11,8 +11,13 @@ typedef struct {
     INES header;
     u32 hash;
     bool reset_nametable_hack;
-} CartMetadata;
+    u8* prg_rom;
+    usize prg_size;
+    u8* chr_rom;
+    usize chr_size;
+} Cart;
 
-CartMetadata cart_create(INES header, const u8* prg_rom, usize prg_size);
+Cart cart_create(INES header, u8* prg_rom, usize prg_size, u8* chr_rom, usize chr_size);
+void cart_free(Cart* cart);
 
 #endif

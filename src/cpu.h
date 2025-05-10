@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <memory.h>
+#include "ppu.h"
 #include "types.h"
 #include "instructions.h"
 #include <stdlib.h>
@@ -42,7 +43,7 @@ u16 cpu_next_word(void);
 extern u8 controller1_state;
 void update_controller1(u8 state);
 
-void cpu_init(u8 *prg_rom, usize prog_rom_size);
+void cpu_init(u8 *prg_rom, usize prog_rom_size, PPU* ppu);
 void cpu_free(void);
 
 // addressing mode utils

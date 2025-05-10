@@ -63,7 +63,12 @@ void handle_inputs(int gamepad) {
     update_controller1(state);
 }
 
-void nes_init(const char* rom_path) {
+typedef struct {
+    Cart cart;
+    PPU ppu;
+} NES;
+
+void nes_init(NES* nes, const char* rom_path) {
     // load ROM
     FILE* rom_file = fopen(rom_path, "rb");
     if (!rom_file) {
@@ -98,7 +103,6 @@ void nes_init(const char* rom_path) {
     usize prg_rom_size = ines.prg_banks * 16 * 1024;
     u8* prg_rom = (u8*)malloc(prg_rom_size);
     fread(prg_rom, 1, prg_rom_size, rom_file);
-    CartMetadata cart = cart_create(ines, prg_rom, prg_rom_size);
 
     // read CHR ROM
     usize chr_rom_size = ines.chr_banks * 8 * 1024;
@@ -106,28 +110,31 @@ void nes_init(const char* rom_path) {
     fread(chr_rom, 1, chr_rom_size, rom_file);
     fclose(rom_file);
 
+    nes->cart = cart_create(ines, prg_rom, prg_rom_size, chr_rom, chr_rom_size);
+
     // initialize CPU, PPU and APU
-    cpu_init(prg_rom, prg_rom_size);
-    ppu_init(chr_rom, cart);
+    cpu_init(prg_rom, prg_rom_size, &nes->ppu);
+    ppu_init(&nes->ppu, nes->cart);
     apu_init(AUDIO_SAMPLE_RATE);
 }
 
-void nes_step_frame(void) {
+void nes_step_frame(NES* nes) {
     while (true) {
         usize cpu_cycles = cpu_step();
         
-        if (ppu_step(cpu_cycles * 3)) {
+        if (ppu_step(&nes->ppu, cpu_cycles * 3)) {
             break;
         }
     }
 
     apu_step_frame();
-    ppu_render();
+    ppu_render(&nes->ppu);
 }
 
-void nes_free(void) {
+void nes_free(NES* nes) {
     cpu_free();
-    ppu_free();
+    ppu_free(&nes->ppu);
+    cart_free(&nes->cart);
 }
 
 void audio_input_callback(void* output_buffer, unsigned int frames) {
@@ -141,7 +148,8 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    nes_init(argv[1]);
+    NES nes;
+    nes_init(&nes, argv[1]);
 
     SetTargetFPS(60);
     SetConfigFlags(FLAG_VSYNC_HINT);
@@ -155,7 +163,7 @@ int main(int argc, char* argv[]) {
     PlayAudioStream(stream);
 
     Image image = {
-        .data = frame,
+        .data = nes.ppu.frame,
         .width = SCREEN_WIDTH,
         .height = SCREEN_HEIGHT,
         .format = PIXELFORMAT_UNCOMPRESSED_R8G8B8,
@@ -175,8 +183,8 @@ int main(int argc, char* argv[]) {
 
     while (!WindowShouldClose()) {
         handle_inputs(gamepad);
-        nes_step_frame();
-        UpdateTexture(texture, frame);
+        nes_step_frame(&nes);
+        UpdateTexture(texture, nes.ppu.frame);
 
         BeginDrawing();
             ClearBackground(WHITE);
@@ -189,7 +197,7 @@ int main(int argc, char* argv[]) {
     UnloadTexture(texture);
     CloseAudioDevice();
     CloseWindow();
-    nes_free();
+    nes_free(&nes);
 
     return 0;
 }

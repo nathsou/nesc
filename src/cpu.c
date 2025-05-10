@@ -1,5 +1,4 @@
 #include "cpu.h"
-#include "ppu.h"
 #include "apu.h"
 #include <stdio.h> // for printf
 #include <stdlib.h> // for exit
@@ -29,6 +28,8 @@ u8 controller1_btn_index;
 usize cpu_inst_cycles;
 usize cpu_stall_cycles;
 usize cpu_total_cycles;
+
+PPU* ppu;
 
 const usize INST_CYCLES[] = {
     7, 6, 2, 8, 3, 3, 5, 5, 3, 2, 2, 2, 4, 4, 6, 6, 2, 5, 2, 8, 4, 4, 6, 6, 2, 4, 2, 7, 4, 4, 7, 7,
@@ -60,76 +61,21 @@ const char* INST_OPCODES[] = {
     "BEQ", "SBC", "ILL", "ILL", "ILL", "SBC", "INC", "ILL", "SED", "SBC", "ILL", "ILL", "ILL", "SBC", "INC", "ILL"
 };
 
-// #define NESTEST 1
-
 inline void update_controller1(u8 state) {
     controller1_state = state;
 }
 
-#ifdef NESTEST
-
-typedef struct {
-    FILE* log;
-    usize offset;
-    usize line_number;
-} NesTest;
-
-void nestest_init(NesTest* test, const char* filename) {
-    test->log = fopen(filename, "rb");
-
-    if (!test->log) {
-        printf("Failed to open nestest log file: %s\n", filename);
-        exit(1);
-    }
-
-    test->offset = 0;
-    test->line_number = 1;
-}
-
-void nestest_free(NesTest* test) {
-    fclose(test->log);
-}
-
-char line_buffer[256];
-
-char* nestest_next_line(NesTest* test) {
-    memset(line_buffer, 0, sizeof(line_buffer));
-    if (fgets(line_buffer, sizeof(line_buffer), test->log) == NULL) {
-        return NULL;
-    }
-
-    // remove trailing newline
-    char* newline = strchr(line_buffer, '\n');
-    if (newline) {
-        *newline = '\0';
-    }
-
-    test->offset += strlen(line_buffer);
-    test->line_number++;
-
-    return line_buffer;
-}
-
-NesTest nestest = {0};
-
-#endif
-
-void cpu_init(u8 *prg_rom, usize size) {
+void cpu_init(u8 *prg_rom, usize size, PPU* ppu_instance) {
     prg = prg_rom;
     prog_rom_size = size;
+    ppu = ppu_instance;
 
     // registers
     a = 0;
     x = 0;
     y = 0;
     sp = CPU_STACK_TOP;
-
-    #ifdef NESTEST
-    pc = 0xC000;
-    nestest_init(&nestest, "reformatted_nestest.txt");
-    #else
     pc = cpu_read_word(CPU_RESET_VECTOR);
-    #endif
 
     // flags
     cpu_set_flags(0x24);
@@ -144,12 +90,7 @@ void cpu_init(u8 *prg_rom, usize size) {
     cpu_stall_cycles = 0;
 }
 
-void cpu_free(void) {
-    free(prg);
-    #ifdef NESTEST
-    nestest_free(&nestest);
-    #endif
-}
+void cpu_free(void) {}
 
 u8 cpu_read_byte(u16 addr) {
     if (addr < 0x2000) {
@@ -157,7 +98,7 @@ u8 cpu_read_byte(u16 addr) {
     }
 
     if (addr < 0x4000) {
-        return ppu_read_register(0x2000 + (addr & 7));
+        return ppu_read_register(ppu, 0x2000 + (addr & 7));
     }
 
     if (addr == 0x4016) {
@@ -206,14 +147,19 @@ u8 cpu_read_byte(u16 addr) {
     return 0;
 }
 
+void cpu_transfer_oam(u16 start_addr) {
+    memcpy(ppu->oam, ram + start_addr, 256);
+    cpu_stall_cycles += 513 + (cpu_total_cycles & 1);
+}
+
 void cpu_write_byte(u16 addr, u8 value) {
     if (addr < 0x2000) {
         ram[addr & 0x7ff] = value;
     } else if (addr < 0x4000) {
-        ppu_write_register(0x2000 + (addr & 7), value);
+        ppu_write_register(ppu, 0x2000 + (addr & 7), value);
     } else if (addr == 0x4014) {
         u16 start_addr = (u16)(value << 8);
-        ppu_transfer_oam(start_addr);
+        cpu_transfer_oam(start_addr);
     } else if (addr == 0x4016) {
         // controller 1
         controller1_strobe = (value & 1) == 1;
@@ -385,20 +331,11 @@ usize cpu_step(void) {
     u8 opcode = cpu_read_byte(pc);
     // printf("PC: %04X, %s, A: %02X, X: %02X, Y: %02X, SP: %02X, c: %zu, f: %zu\n", pc, INST_OPCODES[opcode], a, x, y, sp, cpu_total_cycles, frame_count);
 
-    #ifdef NESTEST
-    char* expected_log = nestest_next_line(&nestest);
-    char actual_log[256];
-    snprintf(actual_log, sizeof(actual_log), "%04X %02X A:%02X X:%02X Y:%02X P:%02X SP:%02X", pc, opcode, a, x, y, cpu_get_flags(), sp);
-
-    printf("%s\n", INST_OPCODES[opcode]);
-    printf("expected: %s\n", expected_log);
-    printf("actual  : %s\n\n", actual_log);
-
-    if (strcmp(expected_log, actual_log) != 0) {
-        printf("Mismatch at line %zu, opcode: %s: %s != %s\n", nestest.line_number, INST_OPCODES[opcode], expected_log, actual_log);
-        exit(1);
+    if (ppu->nmi_triggered) {
+        ppu->nmi_triggered = false;
+        nmi();
+        return 0;
     }
-    #endif
 
     pc++;
 

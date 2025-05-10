@@ -13,13 +13,17 @@ u32 compute_hash(const u8* data, usize size) {
 
 #define SMB_HASH 0x30AB8F8A
 
-CartMetadata cart_create(INES header, const u8* prg_rom, usize prg_size) {
+Cart cart_create(INES header, u8* prg_rom, usize prg_size, u8* chr_rom, usize chr_size) {
     u32 hash = compute_hash(prg_rom, prg_size);
 
-    CartMetadata metadata = {
+    Cart metadata = {
         .hash = hash,
         .header = header,
         .reset_nametable_hack = false,
+        .prg_rom = prg_rom,
+        .prg_size = prg_size,
+        .chr_rom = chr_rom,
+        .chr_size = chr_size,
     };
 
     switch (hash) {
@@ -29,4 +33,13 @@ CartMetadata cart_create(INES header, const u8* prg_rom, usize prg_size) {
     }
 
     return metadata;
+}
+
+void cart_free(Cart *cart) {
+    free(cart->prg_rom);
+    free(cart->chr_rom);
+    cart->prg_rom = NULL;
+    cart->chr_rom = NULL;
+    cart->prg_size = 0;
+    cart->chr_size = 0;
 }

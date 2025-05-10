@@ -25,42 +25,46 @@
 #define PPU_STATUS_SPRITE0_HIT 64
 #define PPU_STATUS_VBLANK 128
 
-extern u8* chr_rom; // 1 page of CHR ROM (8KB)
-extern u8 nametable[2048]; // 2KB of nametable RAM
-extern u8 palette_table[32]; // 32 bytes of palette RAM
-extern u8 oam[256]; // 256 bytes of OAM RAM
+typedef struct {
+    usize nametable1_offset;
+    usize nametable2_offset;
+} NametableOffsets;
 
-extern u16 ppu_v; // current VRAM address
-extern u8 ppu_w; // write toggle (1 bit)
-extern u8 ppu_f; // even/odd frame flag (1 bit)
+typedef struct {
+    usize scanlines;
+    usize dots;
+    usize frame_count;
+    Cart cart;
+    u8 nametable[2048]; // 2KB of nametable RAM
+    u8 palette_table[32]; // 32 bytes of palette RAM
+    u8 oam[256]; // 256 bytes of OAM RAM
+    u8 ctrl_reg;
+    u8 mask_reg;
+    u8 status_reg;
+    u8 oam_addr_reg;
+    u8 scroll_x;
+    u8 scroll_y;
+    u8 frame[SCREEN_WIDTH * SCREEN_HEIGHT * 3]; // 3 bytes per pixel (RGB)
+    bool opaque_bg_mask[SCREEN_WIDTH * SCREEN_HEIGHT];
+    u16 vram_addr; // v register
+    u8 vram_internal_buffer; // VRAM read/write buffer
+    bool write_toggle;
+    u8 oam_dma;
+    NametableOffsets nametable_offsets;
+    bool nmi_triggered;
+    bool nmi_edge_detector;
+    bool should_trigger_nmi;
+} PPU;
 
-// PPU registers
-extern u8 ppu_ctrl; // Control register: $2000
-extern u8 ppu_mask; // Mask register: $2001
-extern u8 ppu_status; // Status register: $2002
-extern u8 oam_addr; // OAM address: $2003
-extern u8 ppu_scroll_x;
-extern u8 ppu_scroll_y;
+void ppu_init(PPU* self, Cart cart);
+void ppu_free(PPU* self);
 
-extern u16 vram_addr;
-extern u8 vram_internal_buffer; // VRAM read/write buffer
-extern u8 oam_dma; // OAM DMA: $4014
+u8 ppu_read_register(PPU* self, u16 addr);
+void ppu_write_register(PPU* self, u16 addr, u8 value);
 
-void ppu_transfer_oam(u16 start_addr);
-
-// screen
-extern u8 frame[SCREEN_WIDTH * SCREEN_HEIGHT * 3]; // 3 bytes per pixel (RGB)
-extern usize frame_count;
-
-void ppu_init(u8* chr, CartMetadata cart_metadata);
-void ppu_free(void);
-
-u8 ppu_read_register(u16 addr);
-void ppu_write_register(u16 addr, u8 value);
-
-u8 ppu_read(u16 addr);
-void ppu_write(u16 addr, u8 value);
-bool ppu_step(usize cycles);
-void ppu_render(void);
+u8 ppu_read(PPU* self, u16 addr);
+void ppu_write(PPU *self, u16 addr, u8 value);
+bool ppu_step(PPU* self, usize cycles);
+void ppu_render(PPU* self);
 
 #endif
