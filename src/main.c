@@ -30,7 +30,7 @@
 #define CONTROLLER1_START_KEY KEY_ENTER
 #define CONTROLLER1_SELECT_KEY KEY_SPACE
 
-void handle_inputs(int gamepad) {
+void handle_inputs(CPU* cpu, int gamepad) {
     bool up = false;
     bool down = false;
     bool left = false;
@@ -60,11 +60,12 @@ void handle_inputs(int gamepad) {
     if (start) state |= CONTROLLER_START;
     if (select) state |= CONTROLLER_SELECT;
 
-    update_controller1(state);
+    cpu_update_controller1(cpu, state);
 }
 
 typedef struct {
     Cart cart;
+    CPU cpu;
     PPU ppu;
 } NES;
 
@@ -113,14 +114,14 @@ void nes_init(NES* nes, const char* rom_path) {
     nes->cart = cart_create(ines, prg_rom, prg_rom_size, chr_rom, chr_rom_size);
 
     // initialize CPU, PPU and APU
-    cpu_init(prg_rom, prg_rom_size, &nes->ppu);
     ppu_init(&nes->ppu, nes->cart);
-    apu_init(AUDIO_SAMPLE_RATE);
+    cpu_init(&nes->cpu, nes->cart, &nes->ppu);
+    apu_init(AUDIO_SAMPLE_RATE, &nes->cpu);
 }
 
 void nes_step_frame(NES* nes) {
     while (true) {
-        usize cpu_cycles = cpu_step();
+        usize cpu_cycles = cpu_step(&nes->cpu);
         
         if (ppu_step(&nes->ppu, cpu_cycles * 3)) {
             break;
@@ -132,7 +133,7 @@ void nes_step_frame(NES* nes) {
 }
 
 void nes_free(NES* nes) {
-    cpu_free();
+    cpu_free(&nes->cpu);
     ppu_free(&nes->ppu);
     cart_free(&nes->cart);
 }
@@ -182,7 +183,7 @@ int main(int argc, char* argv[]) {
     int gamepad = 0;
 
     while (!WindowShouldClose()) {
-        handle_inputs(gamepad);
+        handle_inputs(&nes.cpu, gamepad);
         nes_step_frame(&nes);
         UpdateTexture(texture, nes.ppu.frame);
 

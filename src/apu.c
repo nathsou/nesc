@@ -479,9 +479,10 @@ typedef struct {
     bool irq_enabled;
     u16 memory_read_request;
     bool has_memory_request;
+    CPU* cpu;
 } DeltaModulationChannel;
 
-void dmc_init(DeltaModulationChannel* dmc) {
+void dmc_init(DeltaModulationChannel* dmc, CPU* cpu) {
     dmc->enabled = false;
     dmc->interrupt_flag = false;
     dmc->loop_flag = false;
@@ -496,6 +497,7 @@ void dmc_init(DeltaModulationChannel* dmc) {
     dmc->output_bits_remaining = 0;
     dmc->irq_enabled = false;
     dmc->has_memory_request = false;
+    dmc->cpu = cpu;
 }
 
 void dmc_restart(DeltaModulationChannel* dmc) {
@@ -523,7 +525,7 @@ void dmc_step_shifter(DeltaModulationChannel* dmc) {
 
 void dmc_step_reader(DeltaModulationChannel* dmc) {
     if (dmc->output_bits_remaining == 0 && dmc->bytes_remaining > 0) {
-        cpu_stall_cycles += 4;
+        dmc->cpu->stall_cycles += 4;
         dmc->memory_read_request = dmc->current_addr;
         dmc->has_memory_request = true;
         dmc->output_bits_remaining = 8;
@@ -652,13 +654,13 @@ Filter filter1, filter2, filter3;
 usize frame_counter;
 u16 audio_buffer_size = AUDIO_BUFFER_SIZE;
 
-void apu_init(usize frequency) {
+void apu_init(usize frequency, CPU* cpu) {
     memset(audio_buffer, 0, AUDIO_BUFFER_SIZE);
     pulse_init(&pulse1);
     pulse_init(&pulse2);
     triangle_init(&triangle);
     noise_init(&noise);
-    dmc_init(&dmc);
+    dmc_init(&dmc, cpu);
 
     sample_rate = frequency;
     audio_buffer_index = 0;

@@ -50,6 +50,7 @@
         "stddef.h": "c",
         "stdint.h": "c",
         "apu.h": "c",
-        "external.h": "c"
+        "external.h": "c",
+        "stdbool.h": "c"
     }
 }
