@@ -22,3 +22,4 @@ In the root folder:
 
 ## Mappers
 - [x] NROM
+- [x] MMC1

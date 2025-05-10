@@ -35,10 +35,9 @@ const char* INST_OPCODES[] = {
 
 void cpu_set_flags(CPU* self, u8 flags);
 
-void cpu_init(CPU* self, Cart cart, PPU* ppu, APU* apu, Mapper* mapper) {
+void cpu_init(CPU* self, PPU* ppu, APU* apu, Mapper* mapper) {
     self->ppu = ppu;
     self->apu = apu;
-    self->cart = cart;
     self->mapper = mapper;
 
     // registers

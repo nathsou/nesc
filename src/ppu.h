@@ -3,6 +3,7 @@
 
 #include "types.h"
 #include "cart.h"
+#include "mapper.h"
 #include <string.h>
 #include <stdlib.h>
 
@@ -34,7 +35,8 @@ typedef struct {
     usize scanlines;
     usize dots;
     usize frame_count;
-    Cart cart;
+    Cart* cart;
+    Mapper* mapper;    
     u8 nametable[2048]; // 2KB of nametable RAM
     u8 palette_table[32]; // 32 bytes of palette RAM
     u8 oam[256]; // 256 bytes of OAM RAM
@@ -56,7 +58,7 @@ typedef struct {
     bool should_trigger_nmi;
 } PPU;
 
-void ppu_init(PPU* self, Cart cart);
+void ppu_init(PPU* self, Cart* cart, Mapper* mapper);
 void ppu_free(PPU* self);
 
 u8 ppu_read_register(PPU* self, u16 addr);

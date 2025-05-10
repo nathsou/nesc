@@ -28,7 +28,6 @@ typedef struct {
     bool carry_flag, zero_flag, neg_flag, decimal_flag, overflow_flag, break_flag, interrupt_disable_flag;
     u8 ram[2048];
     usize inst_cycles, total_cycles, stall_cycles;
-    Cart cart;
     u8 controller1_state, controller1_btn_index;
     bool controller1_strobe;
 } CPU;
@@ -43,7 +42,7 @@ void cpu_write_word(CPU* self, u16 addr, u16 value);
 extern u8 controller1_state;
 void cpu_update_controller1(CPU* self, u8 state);
 
-void cpu_init(CPU* self, Cart cart, PPU* ppu, APU* apu, Mapper* mapper);
+void cpu_init(CPU* self, PPU* ppu, APU* apu, Mapper* mapper);
 void cpu_free(CPU* self);
 usize cpu_step(CPU* cpu);
 

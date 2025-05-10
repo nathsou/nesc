@@ -1,12 +1,18 @@
 #include "nes.h"
 #include "nrom.h"
+#include "mmc1.h"
 
 Mapper *get_mapper(INES ines) {
     switch (ines.mapper_type) {
         case 0: {
             Mapper_NROM* nrom = (Mapper_NROM*)malloc(sizeof(Mapper_NROM));
-            mapper_nrom_init((Mapper_NROM*)nrom);
+            mapper_nrom_init(nrom);
             return (Mapper*)nrom;
+        }
+        case 1: {
+            Mapper_MMC1* mmc1 = (Mapper_MMC1*)malloc(sizeof(Mapper_MMC1));
+            mapper_mmc1_init(mmc1);
+            return (Mapper*)mmc1;
         }
     }
 
@@ -58,12 +64,12 @@ void nes_init(NES* nes, const char* rom_path) {
     fclose(rom_file);
 
     nes->cart = cart_create(ines, prg_rom, prg_rom_size, chr_rom, chr_rom_size);
-    nes->mapper->init(nes->mapper, nes->cart);
+    nes->mapper->init(nes->mapper, &nes->cart);
 
     // initialize CPU, PPU and APU
-    ppu_init(&nes->ppu, nes->cart);
+    ppu_init(&nes->ppu, &nes->cart, nes->mapper);
     apu_init(&nes->apu, AUDIO_SAMPLE_RATE);
-    cpu_init(&nes->cpu, nes->cart, &nes->ppu, &nes->apu, nes->mapper);
+    cpu_init(&nes->cpu, &nes->ppu, &nes->apu, nes->mapper);
 }
 
 void nes_step_frame(NES* nes) {

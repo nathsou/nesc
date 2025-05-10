@@ -32,11 +32,12 @@ inline void ppu_clear_bg_mask(PPU* self) {
 
 NametableOffsets ppu_get_nametable_offsets(PPU* self, u8 base_nametable);
 
-void ppu_init(PPU* self, Cart cart) {
+void ppu_init(PPU* self, Cart *cart, Mapper* mapper) {
     self->scanlines = 0;
     self->dots = 0;
     self->frame_count = 0;
     self->cart = cart;
+    self->mapper = mapper;
     memset(self->nametable, 0, sizeof(self->nametable));
     memset(self->palette_table, 0, sizeof(self->palette_table));
     memset(self->oam, 0, sizeof(self->oam));
@@ -151,7 +152,7 @@ void ppu_write_register(PPU* self, u16 addr, u8 value) {
 u16 ppu_nametable_mirrored_addr(PPU* self, u16 addr) {
     addr &= 0x2fff;
 
-    switch (self->cart.header.mirroring) {
+    switch (self->cart->header.mirroring) {
         case NT_MIRRORING_HORIZONTAL:
             if (addr >= 0x2000 && addr <= 0x23FF) {
                 return addr - 0x2000;                 // A
@@ -202,10 +203,18 @@ u16 ppu_nametable_mirrored_addr(PPU* self, u16 addr) {
     return 0;
 }
 
+inline u8 ppu_read_chr_rom(PPU* self, u16 addr) {
+    return self->mapper->read(self->mapper, addr);
+}
+
+inline void ppu_write_chr_rom(PPU* self, u16 addr, u8 value) {
+    self->mapper->write(self->mapper, addr, value);
+}
+
 // https://www.nesdev.org/wiki/PPU_memory_map
 u8 ppu_read(PPU* self, u16 addr) {
     if (addr < 0x2000) {
-        return self->cart.chr_rom[addr];
+        return ppu_read_chr_rom(self, addr);
     }
     
     if (addr < 0x3f00) {
@@ -225,7 +234,7 @@ u8 ppu_read(PPU* self, u16 addr) {
 
 void ppu_write(PPU* self, u16 addr, u8 value) {
     if (addr < 0x2000) {
-        self->cart.chr_rom[addr] = value;
+        ppu_write_chr_rom(self, addr, value);
     } else if (addr >= 0x2000 && addr < 0x3f00) {
         self->nametable[ppu_nametable_mirrored_addr(self, addr)] = value;
     } else if (addr == 0x3f10 || addr == 0x3f14 || addr == 0x3f18 || addr == 0x3f1c) {
@@ -273,8 +282,8 @@ void ppu_draw_background_tile(
 ) {
     for (usize tile_y = 0; tile_y < 8; tile_y++) {
         usize chr_rom_offset = bank_offset + n * 16 + tile_y;
-        u8 plane1 = self->cart.chr_rom[chr_rom_offset];
-        u8 plane2 = self->cart.chr_rom[chr_rom_offset + 8];
+        u8 plane1 = ppu_read_chr_rom(self, (u16)chr_rom_offset);
+        u8 plane2 = ppu_read_chr_rom(self, (u16)(chr_rom_offset + 8));
 
         for (usize tile_x = 0; tile_x < 8; tile_x++) {
             u8 bit0 = plane1 & 1;
@@ -331,8 +340,8 @@ void ppu_draw_sprite_tile(
 ) {
     for (usize tile_y = 0; tile_y < 8; tile_y++) {
         usize chr_rom_offset = bank_offset + n * 16 + tile_y;
-        u8 plane1 = self->cart.chr_rom[chr_rom_offset];
-        u8 plane2 = self->cart.chr_rom[chr_rom_offset + 8];
+        u8 plane1 = ppu_read_chr_rom(self, (u16)chr_rom_offset);
+        u8 plane2 = ppu_read_chr_rom(self, (u16)(chr_rom_offset + 8));
 
         for (usize tile_x = 0; tile_x < 8; tile_x++) {
             u8 bit0 = plane1 & 1;
@@ -393,7 +402,7 @@ inline bool ppu_sprite_zero_hit(PPU* self) {
 NametableOffsets ppu_get_nametable_offsets(PPU* self, u8 base_nametable) {
     usize nametable1_offset, nametable2_offset;
 
-    switch (self->cart.header.mirroring) {
+    switch (self->cart->header.mirroring) {
         case NT_MIRRORING_VERTICAL: {
             if ((base_nametable & 1) == 0) {
                 nametable1_offset = 0x000;
@@ -484,7 +493,7 @@ bool ppu_step(PPU* self, usize cycles) {
                 self->scanlines = 0;
                 ppu_detect_nmi_edge(self);
 
-                if (self->cart.reset_nametable_hack) {
+                if (self->cart->reset_nametable_hack) {
                     // The status bar in Super Mario Bros flickers because of inaccurate scrolling handling
                     // this hack fixes this without requiring expensive scrolling computations
                     // see https://forums.nesdev.org/viewtopic.php?f=3&t=10762
