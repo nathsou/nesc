@@ -13,11 +13,6 @@ const u8 LENGTH_LOOKUP[] = {
     192, 24, 72, 26, 16, 28, 32, 30,
 };
 
-typedef struct {
-    bool enabled;
-    u8 counter;
-} LengthCounter;
-
 void length_counter_init(LengthCounter* lc) {
     lc->enabled = false;
     lc->counter = 0;
@@ -49,11 +44,6 @@ inline bool length_counter_is_zero(const LengthCounter* lc) {
 
 // Timer
 
-typedef struct {
-    u16 counter;
-    u16 period;
-} Timer;
-
 void timer_init(Timer* self) {
     self->counter = 0;
     self->period = 0;
@@ -70,16 +60,6 @@ inline bool timer_step(Timer* self) {
 }
 
 // Envelope
-
-typedef struct {
-    bool constant_mode;
-    bool looping;
-    bool start;
-    u8 constant_volume;
-    u8 period;
-    u8 divider;
-    u8 decay;
-} Envelope;
 
 void envelope_init(Envelope* self) {
     self->constant_mode = false;
@@ -113,22 +93,6 @@ inline u8 envelope_output(const Envelope* self) {
 }
 
 // Pulse
-
-typedef struct {
-    bool enabled;
-    u8 duty_mode;
-    u8 duty_cycle;
-    Timer timer;
-    LengthCounter length_counter;
-    Envelope envelope;
-    bool sweep_enabled;
-    u8 sweep_period;
-    bool sweep_negate;
-    u8 sweep_shift;
-    bool sweep_reload;
-    u8 sweep_divider;
-    bool sweep_mute;
-} Pulse;
 
 static const float PULSE_MIXER_LOOKUP[] = {
     0.0f, 0.011609139f, 0.02293948f, 0.034000948f,
@@ -294,17 +258,6 @@ static const float TRIANGLE_MIXER_LOOKUP[] = {
     0.72192425f, 0.72402096f, 0.726108f, 0.72818565f, 0.7302538f, 0.73231256f, 0.73436195f, 0.7364021f,
 };
 
-typedef struct {
-    bool enabled;
-    bool control_flag;
-    u8 counter_reload;
-    Timer timer;
-    LengthCounter length_counter;
-    u8 linear_counter;
-    bool linear_counter_reload;
-    u8 duty_cycle;
-} Triangle;
-
 void triangle_init(Triangle* tc) {
     tc->enabled = false;
     tc->control_flag = false;
@@ -376,15 +329,6 @@ u8 triangle_output(const Triangle* tc) {
 static const u16 NOISE_PERIOD_TABLE[16] = {
     4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068
 };
-
-typedef struct {
-    bool enabled;
-    LengthCounter length_counter;
-    Envelope envelope;
-    Timer timer;
-    u16 shift_register;
-    bool mode;
-} Noise;
 
 void noise_init(Noise* self) {
     self->enabled = false;
@@ -463,26 +407,7 @@ static const u16 DELTA_MODULATION_RATES[] = {
     428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54,
 };
 
-typedef struct {
-    bool enabled;
-    bool interrupt_flag;
-    bool loop_flag;
-    Timer timer;
-    u8 output_level;
-    u16 sample_addr;
-    u16 sample_len;
-    u16 current_addr;
-    u16 bytes_remaining;
-    u8 shift_register;
-    bool silence_flag;
-    u8 output_bits_remaining;
-    bool irq_enabled;
-    u16 memory_read_request;
-    bool has_memory_request;
-    CPU* cpu;
-} DeltaModulationChannel;
-
-void dmc_init(DeltaModulationChannel* dmc, CPU* cpu) {
+void dmc_init(DeltaModulationChannel* dmc) {
     dmc->enabled = false;
     dmc->interrupt_flag = false;
     dmc->loop_flag = false;
@@ -497,7 +422,7 @@ void dmc_init(DeltaModulationChannel* dmc, CPU* cpu) {
     dmc->output_bits_remaining = 0;
     dmc->irq_enabled = false;
     dmc->has_memory_request = false;
-    dmc->cpu = cpu;
+    dmc->cpu_stall_cycles = 0;
 }
 
 void dmc_restart(DeltaModulationChannel* dmc) {
@@ -525,7 +450,7 @@ void dmc_step_shifter(DeltaModulationChannel* dmc) {
 
 void dmc_step_reader(DeltaModulationChannel* dmc) {
     if (dmc->output_bits_remaining == 0 && dmc->bytes_remaining > 0) {
-        dmc->cpu->stall_cycles += 4;
+        dmc->cpu_stall_cycles += 4;
         dmc->memory_read_request = dmc->current_addr;
         dmc->has_memory_request = true;
         dmc->output_bits_remaining = 8;
@@ -602,14 +527,6 @@ inline u8 dmc_output(const DeltaModulationChannel* dmc) {
 
 // Filters
 
-typedef struct {
-    float b0;
-    float b1;
-    float a1;
-    float prev_x;
-    float prev_y;
-} Filter;
-
 void filter_init_low_pass(Filter* f, usize sample_rate, float cutoff) {
     float c = (float)sample_rate / (cutoff * PI);
     float a0 = 1.0f / (1.0f + c);
@@ -642,33 +559,22 @@ float filter_output(Filter* f, float x) {
 
 // APU
 
-usize sample_rate;
-u8 audio_buffer[AUDIO_BUFFER_SIZE];
-u8 web_audio_buffer[AUDIO_BUFFER_SIZE];
-u16 audio_buffer_index;
-Pulse pulse1, pulse2;
-Triangle triangle;
-Noise noise;
-DeltaModulationChannel dmc;
-Filter filter1, filter2, filter3;
-usize frame_counter;
-u16 audio_buffer_size = AUDIO_BUFFER_SIZE;
+void apu_init(APU* self, usize frequency) {
+    memset(self->audio_buffer, 0, AUDIO_BUFFER_SIZE);
+    pulse_init(&self->pulse1);
+    pulse_init(&self->pulse2);
+    triangle_init(&self->triangle);
+    noise_init(&self->noise);
+    dmc_init(&self->dmc);
 
-void apu_init(usize frequency, CPU* cpu) {
-    memset(audio_buffer, 0, AUDIO_BUFFER_SIZE);
-    pulse_init(&pulse1);
-    pulse_init(&pulse2);
-    triangle_init(&triangle);
-    noise_init(&noise);
-    dmc_init(&dmc, cpu);
+    self->sample_rate = frequency;
+    self->audio_buffer_index = 0;
+    self->frame_counter = 0;
+    self->audio_buffer_size = AUDIO_BUFFER_SIZE;
 
-    sample_rate = frequency;
-    audio_buffer_index = 0;
-    frame_counter = 0;
-
-    filter_init_high_pass(&filter1, sample_rate, 90.0f);
-    filter_init_high_pass(&filter2, sample_rate, 440.0f);
-    filter_init_low_pass(&filter3, sample_rate, 14000.0f);
+    filter_init_high_pass(&self->filter1, self->sample_rate, 90.0f);
+    filter_init_high_pass(&self->filter2, self->sample_rate, 440.0f);
+    filter_init_low_pass(&self->filter3, self->sample_rate, 14000.0f);
 }
 
 inline float clamp(float d, float min, float max) {
@@ -676,21 +582,21 @@ inline float clamp(float d, float min, float max) {
   return t > max ? max : t;
 }
 
-u8 apu_get_sample(void) {
+u8 apu_get_sample(APU* self) {
     // https://www.nesdev.org/wiki/APU_Mixer
-    u8 p1 = pulse_output(&pulse1);
-    u8 p2 = pulse_output(&pulse2);
-    u8 t = triangle_output(&triangle);
-    u8 n = noise_output(&noise);
-    u8 d = dmc_output(&dmc);
+    u8 p1 = pulse_output(&self->pulse1);
+    u8 p2 = pulse_output(&self->pulse2);
+    u8 t = triangle_output(&self->triangle);
+    u8 n = noise_output(&self->noise);
+    u8 d = dmc_output(&self->dmc);
 
     float pulse_out = PULSE_MIXER_LOOKUP[p1 + p2];
     float triangle_out = TRIANGLE_MIXER_LOOKUP[3 * t + 2 * n + d];
     float sample = pulse_out + triangle_out;
 
-    sample = filter_output(&filter1, sample);
-    sample = filter_output(&filter2, sample);
-    sample = filter_output(&filter3, sample);
+    sample = filter_output(&self->filter1, sample);
+    sample = filter_output(&self->filter2, sample);
+    sample = filter_output(&self->filter3, sample);
 
     // normalize to [0, 1] (constants found by running the game and measuring the output)
     sample = clamp((sample + 0.325022f) * 1.5792998016399449f, 0.0f, 1.0f);
@@ -698,69 +604,69 @@ u8 apu_get_sample(void) {
     return (u8)(255.0f * sample);
 }
 
-void apu_write(u16 addr, u8 value) {
+void apu_write(APU* self, u16 addr, u8 value) {
     switch (addr) {
         // Pulse 1
         case 0x4000: {
-            pulse_write_control(&pulse1, value);
+            pulse_write_control(&self->pulse1, value);
             break;
         }
         case 0x4001: {
-            pulse_write_sweep(&pulse1, value);
+            pulse_write_sweep(&self->pulse1, value);
             break;
         }
         case 0x4002: {
-            pulse_write_reload_low(&pulse1, value);
+            pulse_write_reload_low(&self->pulse1, value);
             break;
         }
         case 0x4003: {
-            pulse_write_reload_high(&pulse1, value);
+            pulse_write_reload_high(&self->pulse1, value);
             break;
         }
         // Pulse 2
         case 0x4004: {
-            pulse_write_control(&pulse2, value);
+            pulse_write_control(&self->pulse2, value);
             break;
         }
         case 0x4005: {
-            pulse_write_sweep(&pulse2, value);
+            pulse_write_sweep(&self->pulse2, value);
             break;
         }
         case 0x4006: {
-            pulse_write_reload_low(&pulse2, value);
+            pulse_write_reload_low(&self->pulse2, value);
             break;
         }
         case 0x4007: {
-            pulse_write_reload_high(&pulse2, value);
+            pulse_write_reload_high(&self->pulse2, value);
             break;
         }
         // Triangle
         case 0x4008: {
-            triangle_write_setup(&triangle, value);
+            triangle_write_setup(&self->triangle, value);
             break;
         }
         case 0x4009: {
             break;
         }
         case 0x400A: {
-            triangle_write_timer_low(&triangle, value);
+            triangle_write_timer_low(&self->triangle, value);
             break;
         }
         case 0x400B: {
-            triangle_write_timer_high(&triangle, value);
+            triangle_write_timer_high(&self->triangle, value);
             break;
         }
         // Noise
         case 0x400C: {
-            noise_write_control(&noise, value);
+            noise_write_control(&self->noise, value);
             break;
         }
         case 0x400E: {
-            noise_write_period(&noise, value);
+            noise_write_period(&self->noise, value);
             break;
         }
         case 0x400F: {
-            noise_write_length(&noise, value);
+            noise_write_length(&self->noise, value);
             break;
         }
         case 0x400D: {
@@ -768,29 +674,29 @@ void apu_write(u16 addr, u8 value) {
         }
         // DMC
         case 0x4010: {
-            dmc_write_control(&dmc, value);
+            dmc_write_control(&self->dmc, value);
             break;
         }
         case 0x4011: {
-            dmc_write_output(&dmc, value);
+            dmc_write_output(&self->dmc, value);
             break;
         }
         case 0x4012: {
-            dmc_write_sample_addr(&dmc, value);
+            dmc_write_sample_addr(&self->dmc, value);
             break;
         }
         case 0x4013: {
-            dmc_write_sample_len(&dmc, value);
+            dmc_write_sample_len(&self->dmc, value);
             break;
         }
         // Control
         case 0x4015: {
-            pulse_set_enabled(&pulse1, (value & 1) != 0);
-            pulse_set_enabled(&pulse2, (value & 2) != 0);
-            triangle_set_enabled(&triangle, (value & 4) != 0);
-            noise_set_enabled(&noise, (value & 8) != 0);
-            dmc_set_enabled(&dmc, (value & 16) != 0);
-            dmc_clear_interrupt_flag(&dmc);
+            pulse_set_enabled(&self->pulse1, (value & 1) != 0);
+            pulse_set_enabled(&self->pulse2, (value & 2) != 0);
+            triangle_set_enabled(&self->triangle, (value & 4) != 0);
+            noise_set_enabled(&self->noise, (value & 8) != 0);
+            dmc_set_enabled(&self->dmc, (value & 16) != 0);
+            dmc_clear_interrupt_flag(&self->dmc);
             break;
         }
         // Frame counter
@@ -800,50 +706,50 @@ void apu_write(u16 addr, u8 value) {
     }
 }
 
-void apu_step_timer(void) {
-    pulse_step_timer(&pulse1);
-    pulse_step_timer(&pulse2);
-    triangle_step_timer(&triangle);
-    noise_step_timer(&noise);
-    dmc_step_timer(&dmc);
+void apu_step_timer(APU* self) {
+    pulse_step_timer(&self->pulse1);
+    pulse_step_timer(&self->pulse2);
+    triangle_step_timer(&self->triangle);
+    noise_step_timer(&self->noise);
+    dmc_step_timer(&self->dmc);
 }
 
-void apu_step_envelope(void) {
-    pulse_step_envelope(&pulse1);
-    pulse_step_envelope(&pulse2);
-    triangle_step_linear_counter(&triangle);
+void apu_step_envelope(APU* self) {
+    pulse_step_envelope(&self->pulse1);
+    pulse_step_envelope(&self->pulse2);
+    triangle_step_linear_counter(&self->triangle);
 }
 
-void apu_step_length_counter(void) {
-    pulse_step_length_counter(&pulse1);
-    pulse_step_length_counter(&pulse2);
-    triangle_step_length_counter(&triangle);
-    noise_step_length_counter(&noise);
+void apu_step_length_counter(APU* self) {
+    pulse_step_length_counter(&self->pulse1);
+    pulse_step_length_counter(&self->pulse2);
+    triangle_step_length_counter(&self->triangle);
+    noise_step_length_counter(&self->noise);
 }
 
-void apu_step_sweep(void) {
-    pulse_step_sweep(&pulse1);
-    pulse_step_sweep(&pulse2);
+void apu_step_sweep(APU* self) {
+    pulse_step_sweep(&self->pulse1);
+    pulse_step_sweep(&self->pulse2);
 }
 
 const usize CYCLES_PER_FRAME = CPU_FREQUENCY / FRAME_RATE;
 
-void apu_step_quarter_frame(void) {
+void apu_step_quarter_frame(APU* self) {
     static usize quarter_frame_counter = 0;
 
     /* sequencer steps */
-    frame_counter = (frame_counter + 1) % 5;  // TODO: confirm 4‑step never used
-    if (frame_counter & 1) {
-        apu_step_envelope();
+    self->frame_counter = (self->frame_counter + 1) % 5;  // TODO: confirm 4‑step never used
+    if (self->frame_counter & 1) {
+        apu_step_envelope(self);
     } else {
-        apu_step_length_counter();
-        apu_step_envelope();
-        apu_step_sweep();
+        apu_step_length_counter(self);
+        apu_step_envelope(self);
+        apu_step_sweep(self);
     }
 
     usize cycles = CYCLES_PER_FRAME / 4;
-    usize spf_quarter = sample_rate / (4 * FRAME_RATE);
-    usize spf_frame = sample_rate / FRAME_RATE;
+    usize spf_quarter = self->sample_rate / (4 * FRAME_RATE);
+    usize spf_frame = self->sample_rate / FRAME_RATE;
     usize to_write = (quarter_frame_counter == 3)
                       ? (spf_frame - 3 * spf_quarter)
                       : spf_quarter;
@@ -853,33 +759,34 @@ void apu_step_quarter_frame(void) {
         acc += to_write;
         if (acc >= cycles) {
             acc -= cycles;
-            if (audio_buffer_index < AUDIO_BUFFER_SIZE) {
-                audio_buffer[audio_buffer_index++] = apu_get_sample();
+            if (self->audio_buffer_index < AUDIO_BUFFER_SIZE) {
+                self->audio_buffer[self->audio_buffer_index++] = apu_get_sample(self);
             }
         }
-        apu_step_timer();
+
+        apu_step_timer(self);
     }
 
     quarter_frame_counter = (quarter_frame_counter + 1) & 3;
 }
 
-void apu_step_frame(void) {
+void apu_step_frame(APU* self) {
     // step the frame sequencer 4 times per frame
     // https://www.nesdev.org/wiki/APU_Frame_Counter
 
     for (usize i = 0; i < 4; i++) {
-        apu_step_quarter_frame();
+        apu_step_quarter_frame(self);
     }
 }
 
-void apu_fill_buffer(u8* cb_buffer, usize size) {
-    while (audio_buffer_index < size) {
-        apu_step_quarter_frame();
+void apu_fill_buffer(APU* self, u8* cb_buffer, usize size) {
+    while (self->audio_buffer_index < size) {
+        apu_step_quarter_frame(self);
     }
 
-    usize len = size > audio_buffer_index ? audio_buffer_index : size;
+    usize len = size > self->audio_buffer_index ? self->audio_buffer_index : size;
 
-    memcpy(cb_buffer, audio_buffer, len);
-    audio_buffer_index -= len;
-    memcpy(audio_buffer, audio_buffer + len, audio_buffer_index);
+    memcpy(cb_buffer, self->audio_buffer, len);
+    self->audio_buffer_index -= len;
+    memcpy(self->audio_buffer, self->audio_buffer + len, self->audio_buffer_index);
 }

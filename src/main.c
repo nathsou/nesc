@@ -64,9 +64,10 @@ void handle_inputs(CPU* cpu, int gamepad) {
 }
 
 typedef struct {
-    Cart cart;
     CPU cpu;
     PPU ppu;
+    APU apu;
+    Cart cart;
 } NES;
 
 void nes_init(NES* nes, const char* rom_path) {
@@ -115,8 +116,8 @@ void nes_init(NES* nes, const char* rom_path) {
 
     // initialize CPU, PPU and APU
     ppu_init(&nes->ppu, nes->cart);
-    cpu_init(&nes->cpu, nes->cart, &nes->ppu);
-    apu_init(AUDIO_SAMPLE_RATE, &nes->cpu);
+    apu_init(&nes->apu, AUDIO_SAMPLE_RATE);
+    cpu_init(&nes->cpu, nes->cart, &nes->ppu, &nes->apu);
 }
 
 void nes_step_frame(NES* nes) {
@@ -128,19 +129,22 @@ void nes_step_frame(NES* nes) {
         }
     }
 
-    apu_step_frame();
+    apu_step_frame(&nes->apu);
     ppu_render(&nes->ppu);
 }
+
+APU* apu_instance = NULL;
 
 void nes_free(NES* nes) {
     cpu_free(&nes->cpu);
     ppu_free(&nes->ppu);
     cart_free(&nes->cart);
+    apu_instance = NULL;
 }
 
 void audio_input_callback(void* output_buffer, unsigned int frames) {
     u8 *samples = (u8*)output_buffer;
-    apu_fill_buffer(samples, (usize)frames);
+    apu_fill_buffer(apu_instance, samples, (usize)frames);
 }
 
 int main(int argc, char* argv[]) {
@@ -151,6 +155,7 @@ int main(int argc, char* argv[]) {
 
     NES nes;
     nes_init(&nes, argv[1]);
+    apu_instance = &nes.apu;
 
     SetTargetFPS(60);
     SetConfigFlags(FLAG_VSYNC_HINT);

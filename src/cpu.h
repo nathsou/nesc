@@ -6,6 +6,7 @@
 #include <stdbool.h>
 #include <memory.h>
 #include "ppu.h"
+#include "apu.h"
 #include "types.h"
 #include <stdlib.h>
 
@@ -21,6 +22,7 @@ typedef struct {
     u16 pc;
     u8 a, x, y, sp;
     PPU* ppu;
+    APU* apu;
     bool carry_flag, zero_flag, neg_flag, decimal_flag, overflow_flag, break_flag, interrupt_disable_flag;
     u8 ram[2048];
     u8 cart_ram[2048];
@@ -40,7 +42,7 @@ void cpu_write_word(CPU* self, u16 addr, u16 value);
 extern u8 controller1_state;
 void cpu_update_controller1(CPU* self, u8 state);
 
-void cpu_init(CPU* self, Cart cart, PPU* ppu);
+void cpu_init(CPU* self, Cart cart, PPU* ppu, APU* apu);
 void cpu_free(CPU* self);
 usize cpu_step(CPU* cpu);
 

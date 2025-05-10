@@ -35,8 +35,9 @@ const char* INST_OPCODES[] = {
 
 void cpu_set_flags(CPU* self, u8 flags);
 
-void cpu_init(CPU* self, Cart cart, PPU* ppu) {
+void cpu_init(CPU* self, Cart cart, PPU* ppu, APU* apu) {
     self->ppu = ppu;
+    self->apu = apu;
     self->cart = cart;
 
     // registers
@@ -124,7 +125,7 @@ void cpu_transfer_oam(CPU* self, u16 start_addr) {
     self->stall_cycles += 513 + (self->total_cycles & 1);
 }
 
-void cpu_write_byte(CPU* self,u16 addr, u8 value) {
+void cpu_write_byte(CPU* self, u16 addr, u8 value) {
     if (addr < 0x2000) {
         self->ram[addr & 0x7ff] = value;
     } else if (addr < 0x4000) {
@@ -140,7 +141,7 @@ void cpu_write_byte(CPU* self,u16 addr, u8 value) {
             self->controller1_btn_index = 0;
         }
     } else if (addr < 0x4020) {
-        apu_write(addr, value);
+        apu_write(self->apu, addr, value);
     } else if (addr >= 0x6000 && addr < 0x8000) {
         // PRG RAM
         self->cart_ram[((addr - 0x6000) & 0x7FF)] = value;
@@ -1189,7 +1190,10 @@ void bvs_rel(CPU* self, u8 offset) {
 }
 
 usize cpu_step(CPU* self) {
-    if (self->stall_cycles > 0) {
+    if (self->apu->dmc.cpu_stall_cycles > 0) {
+        self->apu->dmc.cpu_stall_cycles--;
+        return 1;
+    } else if (self->stall_cycles > 0) {
         self->stall_cycles--;
         return 1;
     }
