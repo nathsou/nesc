@@ -1,4 +1,17 @@
 #include "nes.h"
+#include "nrom.h"
+
+Mapper *get_mapper(INES ines) {
+    switch (ines.mapper_type) {
+        case 0: {
+            Mapper_NROM* nrom = (Mapper_NROM*)malloc(sizeof(Mapper_NROM));
+            mapper_nrom_init((Mapper_NROM*)nrom);
+            return (Mapper*)nrom;
+        }
+    }
+
+    return NULL;
+}
 
 void nes_init(NES* nes, const char* rom_path) {
     // load ROM
@@ -18,7 +31,9 @@ void nes_init(NES* nes, const char* rom_path) {
     INES ines = ines_parse(header);
     ines_print(ines);
 
-    if (!ines_is_supported(ines)) {
+    nes->mapper = get_mapper(ines);
+
+    if (nes->mapper == NULL) {
         printf("Unsupported mapper: %d\n", ines.mapper_type);
         fclose(rom_file);
         exit(1);
@@ -43,11 +58,12 @@ void nes_init(NES* nes, const char* rom_path) {
     fclose(rom_file);
 
     nes->cart = cart_create(ines, prg_rom, prg_rom_size, chr_rom, chr_rom_size);
+    nes->mapper->init(nes->mapper, nes->cart);
 
     // initialize CPU, PPU and APU
     ppu_init(&nes->ppu, nes->cart);
     apu_init(&nes->apu, AUDIO_SAMPLE_RATE);
-    cpu_init(&nes->cpu, nes->cart, &nes->ppu, &nes->apu);
+    cpu_init(&nes->cpu, nes->cart, &nes->ppu, &nes->apu, nes->mapper);
 }
 
 void nes_step_frame(NES* nes) {
@@ -67,4 +83,6 @@ void nes_free(NES* nes) {
     cpu_free(&nes->cpu);
     ppu_free(&nes->ppu);
     cart_free(&nes->cart);
+    nes->mapper->free(nes->mapper);
+    free(nes->mapper);
 }

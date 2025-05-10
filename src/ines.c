@@ -1,4 +1,5 @@
 #include "ines.h"
+#include "nrom.h"
 
 INES ines_parse(u8* header) {
     // Check for iNES header
@@ -55,8 +56,4 @@ void ines_print(INES ines) {
     printf("Mirroring: %s\n", mirroring_show(ines.mirroring));
     printf("Battery: %s\n", ines.battery ? "Yes" : "No");
     printf("Trainer: %s\n", ines.trainer ? "Yes" : "No");
-}
-
-bool ines_is_supported(INES ines) {
-    return ines.mapper_type == 0;
 }

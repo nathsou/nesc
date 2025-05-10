@@ -35,10 +35,11 @@ const char* INST_OPCODES[] = {
 
 void cpu_set_flags(CPU* self, u8 flags);
 
-void cpu_init(CPU* self, Cart cart, PPU* ppu, APU* apu) {
+void cpu_init(CPU* self, Cart cart, PPU* ppu, APU* apu, Mapper* mapper) {
     self->ppu = ppu;
     self->apu = apu;
     self->cart = cart;
+    self->mapper = mapper;
 
     // registers
     self->a = 0;
@@ -60,7 +61,6 @@ void cpu_init(CPU* self, Cart cart, PPU* ppu, APU* apu) {
     self->stall_cycles = 0;
 
     memset(self->ram, 0, sizeof(self->ram));
-    memset(self->cart_ram, 0, sizeof(self->cart_ram));
 }
 
 void cpu_free(CPU* self) {}
@@ -93,31 +93,7 @@ u8 cpu_read_byte(CPU* self, u16 addr) {
         return 0;
     }
 
-    if (addr >= 0x6000 && addr < 0x8000) {
-        // PRG RAM
-        return self->cart_ram[((addr - 0x6000) & 0x7FF)];
-    }
-
-    if (addr >= 0x8000 && addr <= 0xBFFF) {
-        // NROM: first 16KB of PRG ROM
-        return self->cart.prg_rom[addr - 0x8000];
-    }
-
-    if (addr >= 0x8000) {
-        u16 prg_rom_addr = addr - 0x8000;
-
-        if (self->cart.prg_size == 16 * 1024 && prg_rom_addr >= 0x4000) {
-            // last 16KB of PRG ROM
-            return self->cart.prg_rom[prg_rom_addr - 0x4000];
-        } else {
-            // NROM: first 16KB of PRG ROM
-            return self->cart.prg_rom[prg_rom_addr];
-        }
-    }
-
-    printf("cpu_read_byte: %04x out of range\n", addr);
-    exit(1);
-    return 0;
+    return self->mapper->read(self->mapper, addr);
 }
 
 void cpu_transfer_oam(CPU* self, u16 start_addr) {
@@ -142,18 +118,8 @@ void cpu_write_byte(CPU* self, u16 addr, u8 value) {
         }
     } else if (addr < 0x4020) {
         apu_write(self->apu, addr, value);
-    } else if (addr >= 0x6000 && addr < 0x8000) {
-        // PRG RAM
-        self->cart_ram[((addr - 0x6000) & 0x7FF)] = value;
-    } else if (addr < 0xFFFF) {
-        // PRG ROM
-        if (self->cart.prg_size == 16 * 1024) {
-            // mirror first 16KB of PRG ROM
-            self->cart.prg_rom[(addr - 0x8000) & 0x3FFF] = value;
-        } else {
-            // NROM: last 16KB of PRG ROM
-            self->cart.prg_rom[addr - 0x8000] = value;
-        }
+    } else {
+        self->mapper->write(self->mapper, addr, value);
     }
 }
 

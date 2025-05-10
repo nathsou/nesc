@@ -25,6 +25,5 @@ typedef struct {
 
 INES ines_parse(u8* header);
 void ines_print(INES ines);
-bool ines_is_supported(INES ines);
 
 #endif

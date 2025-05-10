@@ -53,6 +53,10 @@
         "external.h": "c",
         "stdbool.h": "c",
         "stdlib.h": "c",
-        "string.h": "c"
+        "string.h": "c",
+        "nrom.h": "c",
+        "ines.h": "c",
+        "cart.h": "c",
+        "mapper.h": "c"
     }
 }

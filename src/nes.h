@@ -5,6 +5,7 @@
 #include "ppu.h"
 #include "apu.h"
 #include "cart.h"
+#include "mapper.h"
 
 #define AUDIO_SAMPLE_RATE 44100 // Hz
 #define INES_HEADER_SIZE 16
@@ -14,6 +15,7 @@ typedef struct {
     PPU ppu;
     APU apu;
     Cart cart;
+    Mapper* mapper;
 } NES;
 
 #endif
