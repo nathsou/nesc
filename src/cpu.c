@@ -16,6 +16,7 @@ bool neg_flag;
 bool overflow_flag;
 bool brk_flag;
 bool interrupt_disable_flag;
+bool decimal_flag;
 
 u8* prg;
 usize prog_rom_size;
@@ -59,9 +60,59 @@ const char* INST_OPCODES[] = {
     "BEQ", "SBC", "ILL", "ILL", "ILL", "SBC", "INC", "ILL", "SED", "SBC", "ILL", "ILL", "ILL", "SBC", "INC", "ILL"
 };
 
+// #define NESTEST 1
+
 inline void update_controller1(u8 state) {
     controller1_state = state;
 }
+
+#ifdef NESTEST
+
+typedef struct {
+    FILE* log;
+    usize offset;
+    usize line_number;
+} NesTest;
+
+void nestest_init(NesTest* test, const char* filename) {
+    test->log = fopen(filename, "rb");
+
+    if (!test->log) {
+        printf("Failed to open nestest log file: %s\n", filename);
+        exit(1);
+    }
+
+    test->offset = 0;
+    test->line_number = 1;
+}
+
+void nestest_free(NesTest* test) {
+    fclose(test->log);
+}
+
+char line_buffer[256];
+
+char* nestest_next_line(NesTest* test) {
+    memset(line_buffer, 0, sizeof(line_buffer));
+    if (fgets(line_buffer, sizeof(line_buffer), test->log) == NULL) {
+        return NULL;
+    }
+
+    // remove trailing newline
+    char* newline = strchr(line_buffer, '\n');
+    if (newline) {
+        *newline = '\0';
+    }
+
+    test->offset += strlen(line_buffer);
+    test->line_number++;
+
+    return line_buffer;
+}
+
+NesTest nestest = {0};
+
+#endif
 
 void cpu_init(u8 *prg_rom, usize size) {
     prg = prg_rom;
@@ -72,15 +123,16 @@ void cpu_init(u8 *prg_rom, usize size) {
     x = 0;
     y = 0;
     sp = CPU_STACK_TOP;
+
+    #ifdef NESTEST
+    pc = 0xC000;
+    nestest_init(&nestest, "reformatted_nestest.txt");
+    #else
     pc = cpu_read_word(CPU_RESET_VECTOR);
+    #endif
 
     // flags
-    carry_flag = false;
-    zero_flag = false;
-    neg_flag = false;
-    overflow_flag = false;
-    brk_flag = false;
-    interrupt_disable_flag = false;
+    cpu_set_flags(0x24);
 
     // controller
     controller1_state = 0;
@@ -94,6 +146,9 @@ void cpu_init(u8 *prg_rom, usize size) {
 
 void cpu_free(void) {
     free(prg);
+    #ifdef NESTEST
+    nestest_free(&nestest);
+    #endif
 }
 
 u8 cpu_read_byte(u16 addr) {
@@ -204,23 +259,35 @@ inline void cpu_update_nz(u8 value) {
 }
 
 inline u8 zero_page(u8 addr) {
-    return cpu_read_byte(addr);
+    return cpu_read_byte((u16)addr);
+}
+
+inline u8 zero_page_x_addr(u8 addr) {
+    return addr + x;
 }
 
 inline u8 zero_page_x(u8 addr) {
-    return cpu_read_byte((addr + x) & 0xff); // TODO: check if wrapping is necessary
+    return cpu_read_byte((u16)zero_page_x_addr(addr));
+}
+
+inline u8 zero_page_y_addr(u8 addr) {
+    return addr + y;
 }
 
 inline u8 zero_page_y(u8 addr) {
-    return cpu_read_byte(addr + y);
+    return cpu_read_byte((u16)zero_page_y_addr(addr));
 }
 
 inline u8 absolute(u16 addr) {
     return cpu_read_byte(addr);
 }
 
+inline u16 absolute_x_addr(u16 addr) {
+    return addr + x;
+}
+
 inline u8 absolute_x(u16 addr) {
-    return cpu_read_byte(addr + x);
+    return cpu_read_byte(absolute_x_addr(addr));
 }
 
 inline u8 absolute_y(u16 addr) {
@@ -228,17 +295,18 @@ inline u8 absolute_y(u16 addr) {
 }
 
 inline u16 indirect_x_addr(u8 addr) {
-    // zero page wrap around
-    u8 base_addr = addr + x;
-    u16 low_byte = (u16)cpu_read_byte(base_addr);
-    u16 high_byte = (u16)(((u16)cpu_read_byte(base_addr + 1)) << 8);
+    u8 addr1 = addr + x;
+    u8 addr2 = addr1 + 1; // zero page wrap around
+    u16 low_byte = (u16)cpu_read_byte(addr1);
+    u16 high_byte = (u16)(((u16)cpu_read_byte(addr2)) << 8);
     return high_byte | low_byte;
+    return cpu_read_word(addr1);
 }
 
 inline u16 indirect_y_addr(u8 addr) {
-    // zero page wrap around
+    u8 addr2 = addr + 1; // zero page wrap around
     u16 low_byte = (u16)cpu_read_byte(addr);
-    u16 high_byte = (u16)(((u16)cpu_read_byte(addr + 1)) << 8);
+    u16 high_byte = (u16)(((u16)cpu_read_byte(addr2)) << 8);
     return (high_byte | low_byte) + (u16)y;
 }
 
@@ -284,22 +352,28 @@ inline u16 cpu_next_word(void) {
 }
 
 u8 cpu_get_flags(void) {
+    // NV1BDIZC
     u8 flags = 0;
-    flags |= carry_flag ? 1 : 0;
-    flags |= zero_flag ? 2 : 0;
-    flags |= neg_flag ? 4 : 0;
-    flags |= (1 << 5); // unused
-    flags |= overflow_flag ? 16 : 0;
-    flags |= brk_flag ? 32 : 0;
+    flags |= carry_flag;
+    flags |= zero_flag << 1;
+    flags |= interrupt_disable_flag << 2;
+    flags |= decimal_flag << 3;
+    flags |= brk_flag << 4;
+    flags |= 1 << 5;
+    flags |= overflow_flag << 6;
+    flags |= neg_flag << 7;
+
     return flags;
 }
 
 void cpu_set_flags(u8 flags) {
-    carry_flag = (flags & 1) != 0;
-    zero_flag = (flags & 2) != 0;
-    neg_flag = (flags & 4) != 0;
-    overflow_flag = (flags & 16) != 0;
-    brk_flag = (flags & 32) != 0;
+    carry_flag = flags & 1;
+    zero_flag = (flags >> 1) & 1;
+    interrupt_disable_flag = (flags >> 2) & 1;
+    decimal_flag = (flags >> 3) & 1;
+    brk_flag = (flags >> 4) & 1;
+    overflow_flag = (flags >> 6) & 1;
+    neg_flag = (flags >> 7) & 1;
 }
 
 usize cpu_step(void) {
@@ -310,6 +384,22 @@ usize cpu_step(void) {
 
     u8 opcode = cpu_read_byte(pc);
     // printf("PC: %04X, %s, A: %02X, X: %02X, Y: %02X, SP: %02X, c: %zu, f: %zu\n", pc, INST_OPCODES[opcode], a, x, y, sp, cpu_total_cycles, frame_count);
+
+    #ifdef NESTEST
+    char* expected_log = nestest_next_line(&nestest);
+    char actual_log[256];
+    snprintf(actual_log, sizeof(actual_log), "%04X %02X A:%02X X:%02X Y:%02X P:%02X SP:%02X", pc, opcode, a, x, y, cpu_get_flags(), sp);
+
+    printf("%s\n", INST_OPCODES[opcode]);
+    printf("expected: %s\n", expected_log);
+    printf("actual  : %s\n\n", actual_log);
+
+    if (strcmp(expected_log, actual_log) != 0) {
+        printf("Mismatch at line %zu, opcode: %s: %s != %s\n", nestest.line_number, INST_OPCODES[opcode], expected_log, actual_log);
+        exit(1);
+    }
+    #endif
+
     pc++;
 
     switch (opcode) {

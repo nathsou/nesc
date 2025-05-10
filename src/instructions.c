@@ -88,15 +88,15 @@ inline void ldy_absx(u16 addr) {
 // STA - Store Accumulator
 
 inline void sta_zp(u8 addr) {
-    cpu_write_byte(addr, a);
+    cpu_write_byte((u16)addr, a);
 }
 
 inline void sta_zpx(u8 addr) {
-    cpu_write_byte(addr + x, a);
+    cpu_write_byte((u16)zero_page_x_addr(addr), a);
 }
 
 inline void sta_zpy(u8 addr) {
-    cpu_write_byte(addr + y, a);
+    cpu_write_byte((u16)zero_page_y_addr(addr), a);
 }
 
 inline void sta_abs(u16 addr) {
@@ -126,7 +126,7 @@ inline void stx_zp(u8 addr) {
 }
 
 inline void stx_zpy(u8 addr) {
-    cpu_write_byte(addr + y, x);
+    cpu_write_byte(zero_page_y_addr(addr), x);
 }
 
 inline void stx_abs(u16 addr) {
@@ -144,7 +144,7 @@ inline void sty_zp(u8 addr) {
 }
 
 inline void sty_zpx(u8 addr) {
-    cpu_write_byte(addr + x, y);
+    cpu_write_byte((u16)zero_page_x_addr(addr), y);
 }
 
 inline void sty_abs(u16 addr) {
@@ -158,11 +158,12 @@ inline void sty_abs_x(u16 addr) {
 // ADC - Add with Carry
 
 inline void adc_imm(u8 value) {
-    u16 sum = a + value + (carry_flag ? 1 : 0);
+    u16 sum = (u16)a + (u16)value + (u16)carry_flag;
     carry_flag = sum > 0xff;
+    u8 sum_u8 = (u8)sum;
     // http://www.6502.org/tutorials/vflag.html
-    overflow_flag = (value ^ sum) & (sum ^ a) & 0x80 != 0;
-    a = (u8)sum;
+    overflow_flag = ((value ^ sum_u8) & (sum_u8 ^ a) & 0x80) != 0;
+    a = sum_u8;
     cpu_update_nz(a);
 }
 
@@ -204,7 +205,7 @@ inline void sbc_imm(u8 value) {
     u16 diff = a - value - (carry_flag ? 0 : 1);
     carry_flag = diff <= 0xff;
     u8 sum = diff & 0xff;
-    overflow_flag = (a ^ value) & (a ^ sum) & 0x80 == 0x80;
+    overflow_flag = ((a ^ value) & (a ^ sum) & 0x80) == 0x80;
     a = sum;
     cpu_update_nz(a);
 }
@@ -539,7 +540,9 @@ inline void sec(void) {
 
 // CLD - Clear Decimal Flag
 
-inline void cld(void) {}
+inline void cld(void) {
+    decimal_flag = false;
+}
 
 // CLV - Clear Overflow Flag
 inline void clv(void) {
@@ -554,7 +557,9 @@ inline void cli(void) {
 
 // SED - Set Decimal Flag
 
-inline void sed(void) {}
+inline void sed(void) {
+    decimal_flag = true;
+}
 
 // SEI - Set Interrupt Disable
 
@@ -729,11 +734,11 @@ inline void ror_acc(void) {
 }
 
 void ror_zp(u8 addr) {
-    _ror(addr);
+    _ror((u16)addr);
 }
 
 void ror_zpx(u8 addr) {
-    _ror(zero_page_x(addr));
+    _ror((u16)zero_page_x_addr(addr));
 }
 
 void ror_abs(u16 addr) {
@@ -741,24 +746,13 @@ void ror_abs(u16 addr) {
 }
 
 inline void ror_absx(u16 addr) {
-    u8 val = absolute_x(addr);
-    bool old_carry = carry_flag;
-    carry_flag = val & 1;
-    val >>= 1;
-
-    if (old_carry) {
-        val |= 0x80;
-    }
-
-    cpu_write_byte(addr, val);
-    cpu_update_nz(val);
+    _ror(absolute_x_addr(addr));
 }
 
 // stack instructions
 
 void php(void){
-    brk_flag = true;
-    cpu_push(cpu_get_flags());
+    cpu_push(cpu_get_flags() | 0x10);
 }
 
 void plp(void) {
@@ -816,7 +810,23 @@ inline void jmp_abs(u16 addr) {
 }
 
 void jmp_ind(u16 addr) {
-    u16 target_addr = cpu_read_word(addr);
+    // An original 6502 does not correctly fetch the target address
+    // if the indirect vector falls on a page boundary
+    // (e.g. $xxFF where xx is any value from $00 to $FF).
+    // In this case fetches the LSB from $xxFF as expected but takes the MSB from $xx00.
+    // This is fixed in some later chips like the 65SC02 so for compatibility
+    // always ensure the indirect vector is not at the end of the page.
+
+    u16 target_addr;
+
+    if ((addr & 0x00ff) == 0xff) {
+        u8 lo = cpu_read_byte(addr);
+        u8 hi = cpu_read_byte(addr & 0xff00);
+        target_addr = (u16)(((u16)hi << 8) | (u16)lo);
+    } else {
+        target_addr = cpu_read_word(addr);
+    }
+
     jmp_abs(target_addr);
 }
 

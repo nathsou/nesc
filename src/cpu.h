@@ -22,7 +22,7 @@ extern u8 a, x, y, sp;
 extern u16 pc;
 
 // flags
-extern bool carry_flag, zero_flag, neg_flag, overflow_flag, brk_flag, interrupt_disable_flag;
+extern bool carry_flag, zero_flag, neg_flag, decimal_flag, overflow_flag, brk_flag, interrupt_disable_flag;
 
 // memory
 extern u8 ram[0x800]; // 2KB
@@ -50,10 +50,13 @@ void cpu_free(void);
 void cpu_update_nz(u8 value);
 
 u8 zero_page(u8 addr);
+u8 zero_page_x_addr(u8 addr);
 u8 zero_page_x(u8 addr);
+u8 zero_page_y_addr(u8 addr);
 u8 zero_page_y(u8 addr);
 
 u8 absolute(u16 addr);
+u16 absolute_x_addr(u16 addr);
 u8 absolute_x(u16 addr);
 u8 absolute_y(u16 addr);
 

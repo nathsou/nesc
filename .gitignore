@@ -4,3 +4,4 @@ nesc
 .DS_Store
 *.dSYM
 .idea
+nestest.*
