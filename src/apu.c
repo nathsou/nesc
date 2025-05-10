@@ -13,43 +13,43 @@ const u8 LENGTH_LOOKUP[] = {
     192, 24, 72, 26, 16, 28, 32, 30,
 };
 
-void length_counter_init(LengthCounter* lc) {
+void length_counter_init(APU_LengthCounter* lc) {
     lc->enabled = false;
     lc->counter = 0;
 }
 
-inline void length_counter_reset_to_zero(LengthCounter* lc) {
+inline void length_counter_reset_to_zero(APU_LengthCounter* lc) {
     lc->counter = 0;
 }
 
-inline void length_counter_step(LengthCounter* lc) {
+inline void length_counter_step(APU_LengthCounter* lc) {
     if (lc->enabled && lc->counter > 0) {
         lc->counter--;
     }
 }
 
-inline void length_counter_set(LengthCounter* lc, u8 val) {
+inline void length_counter_set(APU_LengthCounter* lc, u8 val) {
     lc->counter = LENGTH_LOOKUP[val];
 }
 
 // Set enabled status
-inline void length_counter_set_enabled(LengthCounter* lc, bool enabled) {
+inline void length_counter_set_enabled(APU_LengthCounter* lc, bool enabled) {
     lc->enabled = enabled;
 }
 
 // Check if counter is zero
-inline bool length_counter_is_zero(const LengthCounter* lc) {
+inline bool length_counter_is_zero(const APU_LengthCounter* lc) {
     return lc->counter == 0;
 }
 
 // Timer
 
-void timer_init(Timer* self) {
+void timer_init(APU_Timer* self) {
     self->counter = 0;
     self->period = 0;
 }
 
-inline bool timer_step(Timer* self) {
+inline bool timer_step(APU_Timer* self) {
     if (self->counter == 0) {
         self->counter = self->period;
         return true;
@@ -61,7 +61,7 @@ inline bool timer_step(Timer* self) {
 
 // Envelope
 
-void envelope_init(Envelope* self) {
+void envelope_init(APU_Envelope* self) {
     self->constant_mode = false;
     self->looping = false;
     self->start = false;
@@ -71,7 +71,7 @@ void envelope_init(Envelope* self) {
     self->decay = 0;
 }
 
-void envelope_step(Envelope* self) {
+void envelope_step(APU_Envelope* self) {
     if (self->start) {
         self->start = false;
         self->decay = 15;
@@ -88,7 +88,7 @@ void envelope_step(Envelope* self) {
     }
 }
 
-inline u8 envelope_output(const Envelope* self) {
+inline u8 envelope_output(const APU_Envelope* self) {
     return self->constant_mode ? self->constant_volume : self->decay;
 }
 
@@ -112,7 +112,7 @@ static const u8 PULSE_DUTY_TABLE[][8] = {
     { 1, 0, 0, 1, 1, 1, 1, 1 },
 };
 
-void pulse_init(Pulse* self) {
+void pulse_init(APU_Pulse* self) {
     self->enabled = false;
     self->duty_mode = 0;
     self->duty_cycle = 0;
@@ -128,7 +128,7 @@ void pulse_init(Pulse* self) {
     self->sweep_mute = false;
 }
 
-void pulse_set_enabled(Pulse* self, bool enabled) {
+void pulse_set_enabled(APU_Pulse* self, bool enabled) {
     self->enabled = enabled;
 
     if (!enabled) {
@@ -136,21 +136,21 @@ void pulse_set_enabled(Pulse* self, bool enabled) {
     }
 }
 
-void pulse_step_timer(Pulse* self) {
+void pulse_step_timer(APU_Pulse* self) {
     if (timer_step(&self->timer)) {
         self->duty_cycle = (self->duty_cycle + 1) & 7;
     }
 }
 
-inline void pulse_step_length_counter(Pulse* self) {
+inline void pulse_step_length_counter(APU_Pulse* self) {
     length_counter_step(&self->length_counter);
 }
 
-inline void pulse_step_envelope(Pulse* self) {
+inline void pulse_step_envelope(APU_Pulse* self) {
     envelope_step(&self->envelope);
 }
 
-void pulse_write_control(Pulse* self, u8 value) {
+void pulse_write_control(APU_Pulse* self, u8 value) {
     self->duty_mode = (value >> 6) & 0b11;
     bool halt_length_counter = (value & 0b00100000) != 0;
     length_counter_set_enabled(&self->length_counter, !halt_length_counter);
@@ -161,18 +161,18 @@ void pulse_write_control(Pulse* self, u8 value) {
     self->envelope.start = true;
 }
 
-void pulse_write_reload_low(Pulse* self, u8 value) {
+void pulse_write_reload_low(APU_Pulse* self, u8 value) {
     self->timer.period = (u16)((self->timer.period & 0xff00) | ((u16)value));
 }
 
-void pulse_write_reload_high(Pulse* self, u8 value) {
+void pulse_write_reload_high(APU_Pulse* self, u8 value) {
     self->timer.period = (u16)((self->timer.period & 0x00ff) | (((u16)(value & 7)) << 8));
     self->duty_cycle = 0;
     self->envelope.start = true;
     length_counter_set(&self->length_counter, value >> 3);
 }
 
-void pulse_write_sweep(Pulse* self, u8 value) {
+void pulse_write_sweep(APU_Pulse* self, u8 value) {
     self->sweep_enabled = (value & 0b10000000) != 0;
     self->sweep_period = (value >> 4) & 0b111;
     self->sweep_negate = (value & 0b1000) != 0;
@@ -180,7 +180,7 @@ void pulse_write_sweep(Pulse* self, u8 value) {
     self->sweep_reload = true;
 }
 
-u16 pulse_sweep_target_period(Pulse* self) {
+u16 pulse_sweep_target_period(APU_Pulse* self) {
     u16 change_amount = self->timer.period >> self->sweep_shift;
 
     if (self->sweep_negate) {
@@ -194,7 +194,7 @@ u16 pulse_sweep_target_period(Pulse* self) {
     }
 }
 
-void pulse_step_sweep(Pulse* self) {
+void pulse_step_sweep(APU_Pulse* self) {
     u16 target_period = pulse_sweep_target_period(self);
     self->sweep_mute = self->timer.period < 8 || target_period > 0x7ff;
 
@@ -210,7 +210,7 @@ void pulse_step_sweep(Pulse* self) {
     }
 }
 
-u8 pulse_output(Pulse* self) {
+u8 pulse_output(APU_Pulse* self) {
     if (
         !self->enabled ||
         self->sweep_mute ||
@@ -258,7 +258,7 @@ static const float TRIANGLE_MIXER_LOOKUP[] = {
     0.72192425f, 0.72402096f, 0.726108f, 0.72818565f, 0.7302538f, 0.73231256f, 0.73436195f, 0.7364021f,
 };
 
-void triangle_init(Triangle* tc) {
+void triangle_init(APU_Triangle* tc) {
     tc->enabled = false;
     tc->control_flag = false;
     tc->counter_reload = 0;
@@ -269,23 +269,23 @@ void triangle_init(Triangle* tc) {
     tc->duty_cycle = 0;
 }
 
-void triangle_write_setup(Triangle* tc, u8 val) {
+void triangle_write_setup(APU_Triangle* tc, u8 val) {
     tc->control_flag = (val & 0x80) != 0;
     tc->counter_reload = val & 0x7F;
 }
 
-void triangle_write_timer_low(Triangle* tc, u8 val) {
+void triangle_write_timer_low(APU_Triangle* tc, u8 val) {
     tc->timer.period = (tc->timer.period & 0xFF00) | val;
 }
 
-void triangle_write_timer_high(Triangle* tc, u8 val) {
+void triangle_write_timer_high(APU_Triangle* tc, u8 val) {
     tc->timer.period = (tc->timer.period & 0x00FF) | (u16)((u16)(val & 0x07) << 8);
     tc->timer.counter = tc->timer.period;
     length_counter_set(&tc->length_counter, val >> 3);
     tc->linear_counter_reload = true;
 }
 
-void triangle_step_linear_counter(Triangle* tc) {
+void triangle_step_linear_counter(APU_Triangle* tc) {
     if (tc->linear_counter_reload) {
         tc->linear_counter = tc->counter_reload;
     } else if (tc->linear_counter > 0) {
@@ -297,24 +297,24 @@ void triangle_step_linear_counter(Triangle* tc) {
     }
 }
 
-inline void triangle_step_length_counter(Triangle* tc) {
+inline void triangle_step_length_counter(APU_Triangle* tc) {
     length_counter_step(&tc->length_counter);
 }
 
-void triangle_step_timer(Triangle* tc) {
+void triangle_step_timer(APU_Triangle* tc) {
     if (timer_step(&tc->timer) && tc->linear_counter > 0 && !length_counter_is_zero(&tc->length_counter)) {
         tc->duty_cycle = (tc->duty_cycle + 1) & 31;
     }
 }
 
-void triangle_set_enabled(Triangle* tc, bool enabled) {
+void triangle_set_enabled(APU_Triangle* tc, bool enabled) {
     tc->enabled = enabled;
     if (!enabled) {
         length_counter_reset_to_zero(&tc->length_counter);
     }
 }
 
-u8 triangle_output(const Triangle* tc) {
+u8 triangle_output(const APU_Triangle* tc) {
     if (!tc->enabled ||
         length_counter_is_zero(&tc->length_counter) ||
         tc->linear_counter == 0 ||
@@ -330,7 +330,7 @@ static const u16 NOISE_PERIOD_TABLE[16] = {
     4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068
 };
 
-void noise_init(Noise* self) {
+void noise_init(APU_Noise* self) {
     self->enabled = false;
     self->length_counter.counter = 0;
     self->envelope.constant_mode = false;
@@ -346,14 +346,14 @@ void noise_init(Noise* self) {
     self->mode = false;
 }
 
-void noise_set_enabled(Noise* self, bool enabled) {
+void noise_set_enabled(APU_Noise* self, bool enabled) {
     self->enabled = enabled;
     if (!enabled) {
         self->length_counter.counter = 0;
     }
 }
 
-void noise_step_timer(Noise* self) {
+void noise_step_timer(APU_Noise* self) {
     if (timer_step(&self->timer)) {
         u8 bit = self->mode ? 6 : 1;
         u16 bit0 = self->shift_register & 1;
@@ -364,17 +364,17 @@ void noise_step_timer(Noise* self) {
     }
 }
 
-void noise_step_length_counter(Noise* self) {
+void noise_step_length_counter(APU_Noise* self) {
     if (self->length_counter.counter > 0) {
         self->length_counter.counter--;
     }
 }
 
-void noise_step_envelope(Noise* self) {
+void noise_step_envelope(APU_Noise* self) {
     envelope_step(&self->envelope);
 }
 
-void noise_write_control(Noise* self, u8 val) {
+void noise_write_control(APU_Noise* self, u8 val) {
     bool halt_length_counter = (val & 0x20) != 0;
     self->length_counter.counter = halt_length_counter ? 0 : self->length_counter.counter;
     self->envelope.looping = halt_length_counter;
@@ -383,17 +383,17 @@ void noise_write_control(Noise* self, u8 val) {
     self->envelope.constant_volume = val & 0x0F;
 }
 
-void noise_write_period(Noise* self, u8 val) {
+void noise_write_period(APU_Noise* self, u8 val) {
     self->mode = (val & 0x80) != 0;
     self->timer.period = NOISE_PERIOD_TABLE[val & 0x0F];
 }
 
-void noise_write_length(Noise* self, u8 val) {
+void noise_write_length(APU_Noise* self, u8 val) {
     self->length_counter.counter = val >> 3;
     self->envelope.start = true;
 }
 
-u8 noise_output(const Noise* self) {
+u8 noise_output(const APU_Noise* self) {
     if ((self->shift_register & 1) == 1 || self->length_counter.counter == 0) {
         return 0;
     } else {
@@ -407,7 +407,7 @@ static const u16 DELTA_MODULATION_RATES[] = {
     428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54,
 };
 
-void dmc_init(DeltaModulationChannel* dmc) {
+void dmc_init(APU_DeltaModulationChannel* dmc) {
     dmc->enabled = false;
     dmc->interrupt_flag = false;
     dmc->loop_flag = false;
@@ -425,12 +425,12 @@ void dmc_init(DeltaModulationChannel* dmc) {
     dmc->cpu_stall_cycles = 0;
 }
 
-void dmc_restart(DeltaModulationChannel* dmc) {
+void dmc_restart(APU_DeltaModulationChannel* dmc) {
     dmc->current_addr = dmc->sample_addr;
     dmc->bytes_remaining = dmc->sample_len;
 }
 
-void dmc_step_shifter(DeltaModulationChannel* dmc) {
+void dmc_step_shifter(APU_DeltaModulationChannel* dmc) {
     if (dmc->output_bits_remaining != 0) {
         if (!dmc->silence_flag) {
             if (dmc->shift_register & 1) {
@@ -448,7 +448,7 @@ void dmc_step_shifter(DeltaModulationChannel* dmc) {
     }
 }
 
-void dmc_step_reader(DeltaModulationChannel* dmc) {
+void dmc_step_reader(APU_DeltaModulationChannel* dmc) {
     if (dmc->output_bits_remaining == 0 && dmc->bytes_remaining > 0) {
         dmc->cpu_stall_cycles += 4;
         dmc->memory_read_request = dmc->current_addr;
@@ -468,7 +468,7 @@ void dmc_step_reader(DeltaModulationChannel* dmc) {
     }
 }
 
-void dmc_step_timer(DeltaModulationChannel* dmc) {
+void dmc_step_timer(APU_DeltaModulationChannel* dmc) {
     if (dmc->enabled) {
         dmc_step_reader(dmc);
 
@@ -478,25 +478,25 @@ void dmc_step_timer(DeltaModulationChannel* dmc) {
     }
 }
 
-void dmc_write_control(DeltaModulationChannel* dmc, u8 val) {
+void dmc_write_control(APU_DeltaModulationChannel* dmc, u8 val) {
     dmc->irq_enabled = (val & 0x80) != 0;
     dmc->loop_flag = (val & 0x40) != 0;
     dmc->timer.period = DELTA_MODULATION_RATES[val & 0x0F];
 }
 
-inline void dmc_write_output(DeltaModulationChannel* dmc, u8 val) {
+inline void dmc_write_output(APU_DeltaModulationChannel* dmc, u8 val) {
     dmc->output_level = val & 0x7F;
 }
 
-inline void dmc_write_sample_addr(DeltaModulationChannel* dmc, u8 val) {
+inline void dmc_write_sample_addr(APU_DeltaModulationChannel* dmc, u8 val) {
     dmc->sample_addr = 0xC000 | (u16)((u16)val << 6);
 }
 
-inline void dmc_write_sample_len(DeltaModulationChannel* dmc, u8 val) {
+inline void dmc_write_sample_len(APU_DeltaModulationChannel* dmc, u8 val) {
     dmc->sample_len = (u16)((u16)val << 4) | 1;
 }
 
-inline void dmc_set_memory_read_response(DeltaModulationChannel* dmc, u8 val) {
+inline void dmc_set_memory_read_response(APU_DeltaModulationChannel* dmc, u8 val) {
     dmc->shift_register = val;
     dmc->has_memory_request = false;
     if (timer_step(&dmc->timer)) {
@@ -504,15 +504,15 @@ inline void dmc_set_memory_read_response(DeltaModulationChannel* dmc, u8 val) {
     }
 }
 
-inline bool dmc_is_active(const DeltaModulationChannel* dmc) {
+inline bool dmc_is_active(const APU_DeltaModulationChannel* dmc) {
     return dmc->bytes_remaining > 0;
 }
 
-inline void dmc_clear_interrupt_flag(DeltaModulationChannel* dmc) {
+inline void dmc_clear_interrupt_flag(APU_DeltaModulationChannel* dmc) {
     dmc->interrupt_flag = false;
 }
 
-void dmc_set_enabled(DeltaModulationChannel* dmc, bool enabled) {
+void dmc_set_enabled(APU_DeltaModulationChannel* dmc, bool enabled) {
     dmc->enabled = enabled;
     if (!enabled) {
         dmc->bytes_remaining = 0;
@@ -521,13 +521,13 @@ void dmc_set_enabled(DeltaModulationChannel* dmc, bool enabled) {
     }
 }
 
-inline u8 dmc_output(const DeltaModulationChannel* dmc) {
+inline u8 dmc_output(const APU_DeltaModulationChannel* dmc) {
     return dmc->output_level;
 }
 
-// Filters
+// APU_Filters
 
-void filter_init_low_pass(Filter* f, usize sample_rate, float cutoff) {
+void filter_init_low_pass(APU_Filter* f, usize sample_rate, float cutoff) {
     float c = (float)sample_rate / (cutoff * PI);
     float a0 = 1.0f / (1.0f + c);
 
@@ -538,7 +538,7 @@ void filter_init_low_pass(Filter* f, usize sample_rate, float cutoff) {
     f->prev_y = 0.0f;
 }
 
-void filter_init_high_pass(Filter* f, usize sample_rate, float cutoff) {
+void filter_init_high_pass(APU_Filter* f, usize sample_rate, float cutoff) {
     float c = (float)sample_rate / (cutoff * PI);
     float a0 = 1.0f / (1.0f + c);
 
@@ -549,7 +549,7 @@ void filter_init_high_pass(Filter* f, usize sample_rate, float cutoff) {
     f->prev_y = 0.0f;
 }
 
-float filter_output(Filter* f, float x) {
+float filter_output(APU_Filter* f, float x) {
     float y = f->b0 * x + f->b1 * f->prev_x - f->a1 * f->prev_y;
     f->prev_x = x;
     f->prev_y = y;
@@ -606,7 +606,7 @@ u8 apu_get_sample(APU* self) {
 
 void apu_write(APU* self, u16 addr, u8 value) {
     switch (addr) {
-        // Pulse 1
+        // APU_Pulse 1
         case 0x4000: {
             pulse_write_control(&self->pulse1, value);
             break;
@@ -623,7 +623,7 @@ void apu_write(APU* self, u16 addr, u8 value) {
             pulse_write_reload_high(&self->pulse1, value);
             break;
         }
-        // Pulse 2
+        // APU_Pulse 2
         case 0x4004: {
             pulse_write_control(&self->pulse2, value);
             break;
@@ -640,7 +640,7 @@ void apu_write(APU* self, u16 addr, u8 value) {
             pulse_write_reload_high(&self->pulse2, value);
             break;
         }
-        // Triangle
+        // APU_Triangle
         case 0x4008: {
             triangle_write_setup(&self->triangle, value);
             break;
@@ -656,7 +656,7 @@ void apu_write(APU* self, u16 addr, u8 value) {
             triangle_write_timer_high(&self->triangle, value);
             break;
         }
-        // Noise
+        // APU_Noise
         case 0x400C: {
             noise_write_control(&self->noise, value);
             break;

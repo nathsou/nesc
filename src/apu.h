@@ -11,12 +11,12 @@
 typedef struct {
     bool enabled;
     u8 counter;
-} LengthCounter;
+} APU_LengthCounter;
 
 typedef struct {
     u16 counter;
     u16 period;
-} Timer;
+} APU_Timer;
 
 typedef struct {
     bool constant_mode;
@@ -26,15 +26,15 @@ typedef struct {
     u8 period;
     u8 divider;
     u8 decay;
-} Envelope;
+} APU_Envelope;
 
 typedef struct {
     bool enabled;
     u8 duty_mode;
     u8 duty_cycle;
-    Timer timer;
-    LengthCounter length_counter;
-    Envelope envelope;
+    APU_Timer timer;
+    APU_LengthCounter length_counter;
+    APU_Envelope envelope;
     bool sweep_enabled;
     u8 sweep_period;
     bool sweep_negate;
@@ -42,33 +42,33 @@ typedef struct {
     bool sweep_reload;
     u8 sweep_divider;
     bool sweep_mute;
-} Pulse;
+} APU_Pulse;
 
 typedef struct {
     bool enabled;
     bool control_flag;
     u8 counter_reload;
-    Timer timer;
-    LengthCounter length_counter;
+    APU_Timer timer;
+    APU_LengthCounter length_counter;
     u8 linear_counter;
     bool linear_counter_reload;
     u8 duty_cycle;
-} Triangle;
+} APU_Triangle;
 
 typedef struct {
     bool enabled;
-    LengthCounter length_counter;
-    Envelope envelope;
-    Timer timer;
+    APU_LengthCounter length_counter;
+    APU_Envelope envelope;
+    APU_Timer timer;
     u16 shift_register;
     bool mode;
-} Noise;
+} APU_Noise;
 
 typedef struct {
     bool enabled;
     bool interrupt_flag;
     bool loop_flag;
-    Timer timer;
+    APU_Timer timer;
     u8 output_level;
     u16 sample_addr;
     u16 sample_len;
@@ -81,7 +81,7 @@ typedef struct {
     u16 memory_read_request;
     bool has_memory_request;
     usize cpu_stall_cycles;
-} DeltaModulationChannel;
+} APU_DeltaModulationChannel;
 
 typedef struct {
     float b0;
@@ -89,17 +89,17 @@ typedef struct {
     float a1;
     float prev_x;
     float prev_y;
-} Filter;
+} APU_Filter;
 
 typedef struct {
     usize sample_rate;
     u8 audio_buffer[AUDIO_BUFFER_SIZE];
     u16 audio_buffer_index;
-    Pulse pulse1, pulse2;
-    Triangle triangle;
-    Noise noise;
-    DeltaModulationChannel dmc;
-    Filter filter1, filter2, filter3;
+    APU_Pulse pulse1, pulse2;
+    APU_Triangle triangle;
+    APU_Noise noise;
+    APU_DeltaModulationChannel dmc;
+    APU_Filter filter1, filter2, filter3;
     usize frame_counter;
     u16 audio_buffer_size;
 } APU;

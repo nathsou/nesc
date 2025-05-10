@@ -51,6 +51,8 @@
         "stdint.h": "c",
         "apu.h": "c",
         "external.h": "c",
-        "stdbool.h": "c"
+        "stdbool.h": "c",
+        "stdlib.h": "c",
+        "string.h": "c"
     }
 }
