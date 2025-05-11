@@ -1,4 +1,5 @@
 #include "ppu.h"
+#include <stdlib.h>
 
 #define SPRITES_PALETTES_OFFSET 0x11
 #define BYTES_PER_PALETTE 4
@@ -197,7 +198,9 @@ u16 ppu_nametable_mirrored_addr(PPU* self, u16 addr) {
             return addr - 0x2000;
     }
 
+    #ifdef NESC_VERBOSE
     printf("Invalid nametable address: %04X\n", addr);
+    #endif
     exit(1);
 
     return 0;
@@ -400,7 +403,8 @@ inline bool ppu_sprite_zero_hit(PPU* self) {
 }
 
 NametableOffsets ppu_get_nametable_offsets(PPU* self, u8 base_nametable) {
-    usize nametable1_offset, nametable2_offset;
+    usize nametable1_offset = 0;
+    usize nametable2_offset = 0;
 
     switch (self->cart->header.mirroring) {
         case NT_MIRRORING_VERTICAL: {

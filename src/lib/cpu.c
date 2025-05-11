@@ -1164,7 +1164,7 @@ usize cpu_step(CPU* self) {
     }
 
     u8 opcode = cpu_read_byte(self, self->pc);
-    // printf("PC: %04X, %s, A: %02X, X: %02X, Y: %02X, SP: %02X, c: %zu, f: %zu\n", pc, INST_OPCODES[opcode], self->a, self->x, self->y, sp, cpu_total_cycles, frame_count);
+    // LOG("PC: %04X, %s, A: %02X, X: %02X, Y: %02X, SP: %02X, c: %zu, f: %zu\n", self->pc, INST_OPCODES[opcode], self->a, self->x, self->y, self->sp, self->total_cycles, self->ppu->frame_count);
 
     if (self->ppu->nmi_triggered) {
         self->ppu->nmi_triggered = false;
@@ -1327,7 +1327,7 @@ usize cpu_step(CPU* self) {
         case 0x6E: ror_abs(self, cpu_next_word(self)); break;
         case 0x7E: ror_absx(self, cpu_next_word(self)); break;
         default:
-            printf("Unsupported instruction: 0x%02X at PC: 0x%04X\n", opcode, self->pc - 1);
+            LOG("Unsupported instruction: 0x%02X at PC: 0x%04X\n", opcode, self->pc - 1);
             exit(1); 
             break;
     }

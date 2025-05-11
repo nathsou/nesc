@@ -1,6 +1,6 @@
 # nesc
 
-NES emulator in C ported from my work on [this Super Mario Bros static recompilation project](https://github.com/nathsou/smb).
+nesc (pronounced [nessy](https://github.com/nathsou/nessy)) is a NES emulator in C ported from my work on [this Super Mario Bros static recompilation project](https://github.com/nathsou/smb).
 
 ## Controls
 

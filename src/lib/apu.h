@@ -1,5 +1,5 @@
-#ifndef SMB_APU_H
-#define SMB_APU_H
+#ifndef NESC_APU_H
+#define NESC_APU_H
 #define AUDIO_BUFFER_SIZE (4 * 1024)
 
 #include <stddef.h>

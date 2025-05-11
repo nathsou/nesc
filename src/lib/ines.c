@@ -4,7 +4,7 @@
 INES ines_parse(u8* header) {
     // Check for iNES header
     if (header[0] != 'N' || header[1] != 'E' || header[2] != 'S' || header[3] != 0x1A) {
-        printf("Invalid iNES header\n");
+        LOG("Invalid iNES header\n");
         exit(1);
     }
 
@@ -50,10 +50,10 @@ char* mirroring_show(NametableMirroring mirroring) {
 }
 
 void ines_print(INES ines) {
-    printf("PRG banks: %d\n", ines.prg_banks);
-    printf("CHR banks: %d\n", ines.chr_banks);
-    printf("Mapper type: %d\n", ines.mapper_type);
-    printf("Mirroring: %s\n", mirroring_show(ines.mirroring));
-    printf("Battery: %s\n", ines.battery ? "Yes" : "No");
-    printf("Trainer: %s\n", ines.trainer ? "Yes" : "No");
+    LOG("PRG banks: %d\n", ines.prg_banks);
+    LOG("CHR banks: %d\n", ines.chr_banks);
+    LOG("Mapper type: %d\n", ines.mapper_type);
+    LOG("Mirroring: %s\n", mirroring_show(ines.mirroring));
+    LOG("Battery: %s\n", ines.battery ? "Yes" : "No");
+    LOG("Trainer: %s\n", ines.trainer ? "Yes" : "No");
 }

@@ -1,5 +1,5 @@
-#ifndef SMB_PPU_H
-#define SMB_PPU_H
+#ifndef NESC_PPU_H
+#define NESC_PPU_H
 
 #include "types.h"
 #include "cart.h"

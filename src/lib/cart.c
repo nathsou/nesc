@@ -1,4 +1,5 @@
 #include "cart.h"
+#include <stdlib.h>
 
 u32 compute_hash(const u8* data, usize size) {
     u32 hash = HASH_OFFSET_BASIS;
@@ -16,7 +17,7 @@ u32 compute_hash(const u8* data, usize size) {
 Cart cart_create(INES header, u8* prg_rom, usize prg_size, u8* chr_rom, usize chr_size) {
     u32 hash = compute_hash(prg_rom, prg_size);
 
-    Cart metadata = {
+    Cart cart = {
         .hash = hash,
         .header = header,
         .reset_nametable_hack = false,
@@ -28,11 +29,11 @@ Cart cart_create(INES header, u8* prg_rom, usize prg_size, u8* chr_rom, usize ch
 
     switch (hash) {
         case SMB_HASH:
-            metadata.reset_nametable_hack = true;
+            cart.reset_nametable_hack = true;
             break;
     }
 
-    return metadata;
+    return cart;
 }
 
 void cart_free(Cart *cart) {

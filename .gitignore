@@ -5,3 +5,4 @@ nesc
 *.dSYM
 .idea
 nestest.*
+/3ds

@@ -1,11 +1,12 @@
 #include "raylib.h"
 #include <stdio.h>
 #include <stdlib.h>
-#include "nes.h"
+#include "lib/nes.h"
 
 #define SCALE_FACTOR 3
 #define WINDOW_WIDTH (SCREEN_WIDTH * SCALE_FACTOR)
 #define WINDOW_HEIGHT (SCREEN_HEIGHT * SCALE_FACTOR)
+#define AUDIO_SAMPLE_RATE 44100
 
 #define CONTROLLER_RIGHT 0b10000000
 #define CONTROLLER_LEFT 0b01000000
@@ -72,7 +73,7 @@ int main(int argc, char* argv[]) {
     }
 
     NES nes;
-    nes_init(&nes, argv[1]);
+    nes_init_from_file(&nes, argv[1], AUDIO_SAMPLE_RATE);
     apu_instance = &nes.apu;
 
     SetTargetFPS(60);

@@ -7,7 +7,6 @@
 #include "cart.h"
 #include "mapper.h"
 
-#define AUDIO_SAMPLE_RATE 44100 // Hz
 #define INES_HEADER_SIZE 16
 
 typedef struct {
@@ -18,8 +17,14 @@ typedef struct {
     Mapper* mapper;
 } NES;
 
-#endif
+typedef struct {
+    bool ok;
+    char* error;
+} Result;
 
-void nes_init(NES *nes, const char *rom_path);
+Result nes_init(NES *nes, u8* rom_data, usize rom_size, usize audio_sample_rate);
+Result nes_init_from_file(NES *nes, const char *rom_path, usize audio_sample_rate);
 void nes_step_frame(NES *nes);
 void nes_free(NES *nes);
+
+#endif
