@@ -7,21 +7,17 @@
 #include <stdarg.h>
 
 inline Result result_ok() {
-    return (Result){ .ok = true, .error = NULL };
+    return (Result){ .ok = true, .error = "\n" };
 }
 
 Result result_error(char* error, ...) {
+    Result result = { .ok = false };
     va_list args;
     va_start(args, error);
-    char* formatted_error = (char*)malloc(256 * sizeof(char));
-    sprintf(formatted_error, error, args);
+    vsnprintf(result.error, sizeof(result.error), error, args);
     va_end(args);
 
-    if (formatted_error == NULL) {
-        return (Result){ .ok = false, .error = "Memory allocation failed" };
-    }
-
-    return (Result){ .ok = false, .error = formatted_error };
+    return result;
 }
 
 Mapper *get_mapper(INES ines) {
@@ -83,6 +79,7 @@ Result nes_init(NES* nes, u8* rom_data, usize rom_size, usize audio_sample_rate)
     usize chr_rom_size = ines.chr_banks * 8 * 1024;
 
     if (rom_size < rom_offset + chr_rom_size) {
+        free(prg_rom);
         return result_error("Invalid CHR ROM size");
     }
 
@@ -106,7 +103,7 @@ Result nes_init_from_file(NES* nes, const char* rom_path, usize audio_sample_rat
     FILE* file = fopen(rom_path, "rb");
 
     if (file == NULL) {
-        return result_error("Failed to open ROM file: %s", rom_path);
+        return result_error("Failed to open ROM file '%s'", rom_path);
     }
 
     fseek(file, 0, SEEK_END);

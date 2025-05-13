@@ -26,7 +26,7 @@
 #define CONTROLLER1_START_KEY KEY_ENTER
 #define CONTROLLER1_SELECT_KEY KEY_SPACE
 
-void handle_inputs(CPU* cpu, int gamepad) {
+void handle_inputs(CPU* cpu) {
     bool up = false;
     bool down = false;
     bool left = false;
@@ -73,11 +73,17 @@ int main(int argc, char* argv[]) {
     }
 
     NES nes;
-    nes_init_from_file(&nes, argv[1], AUDIO_SAMPLE_RATE);
+    Result nes_init_res = nes_init_from_file(&nes, argv[1], AUDIO_SAMPLE_RATE);
+
+    if (!nes_init_res.ok) {
+        fprintf(stderr, "Error: %s\n", nes_init_res.error);
+        return 1;
+    }
+
     apu_instance = &nes.apu;
 
     SetTargetFPS(60);
-    SetConfigFlags(FLAG_VSYNC_HINT);
+    SetConfigFlags(FLAG_VSYNC_HINT | FLAG_WINDOW_HIGHDPI);
     InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "nesc");
 
     SetAudioStreamBufferSizeDefault(128);
@@ -103,11 +109,9 @@ int main(int argc, char* argv[]) {
 
     Rectangle source = { 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT };
     Rectangle dest = { 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT };
-    
-    int gamepad = 0;
 
     while (!WindowShouldClose()) {
-        handle_inputs(&nes.cpu, gamepad);
+        handle_inputs(&nes.cpu);
         nes_step_frame(&nes);
         UpdateTexture(texture, nes.ppu.frame);
 

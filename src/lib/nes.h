@@ -19,7 +19,7 @@ typedef struct {
 
 typedef struct {
     bool ok;
-    char* error;
+    char error[256];
 } Result;
 
 Result nes_init(NES *nes, u8* rom_data, usize rom_size, usize audio_sample_rate);

@@ -57,6 +57,7 @@
         "nrom.h": "c",
         "ines.h": "c",
         "cart.h": "c",
-        "mapper.h": "c"
+        "mapper.h": "c",
+        "sstream": "c"
     }
 }

@@ -26,17 +26,17 @@
 #define PPU_STATUS_SPRITE0_HIT 64
 #define PPU_STATUS_VBLANK 128
 
-typedef struct {
-    usize nametable1_offset;
-    usize nametable2_offset;
-} NametableOffsets;
+#define PPU_V_COARSE_X_SCROLL  0b000000000011111
+#define PPU_V_COARSE_Y_SCROLL  0b000001111100000
+#define PPU_V_NAMETABLE_SELECT 0b000110000000000
+#define PPU_V_FINE_Y_SCROLL    0b111000000000000
 
 typedef struct {
     usize scanlines;
     usize dots;
     usize frame_count;
     Cart* cart;
-    Mapper* mapper;    
+    Mapper* mapper;
     u8 nametable[2048]; // 2KB of nametable RAM
     u8 palette_table[32]; // 32 bytes of palette RAM
     u8 oam[256]; // 256 bytes of OAM RAM
@@ -46,16 +46,24 @@ typedef struct {
     u8 oam_addr_reg;
     u8 scroll_x;
     u8 scroll_y;
+    u16 v_reg;
+    u16 t_reg;
+    u8 x_reg; // fine X scroll
+    u8 data_buffer; // internal buffer for data reads
     u8 frame[SCREEN_WIDTH * SCREEN_HEIGHT * 3]; // 3 bytes per pixel (RGB)
     bool opaque_bg_mask[SCREEN_WIDTH * SCREEN_HEIGHT];
-    u16 vram_addr; // v register
-    u8 vram_internal_buffer; // VRAM read/write buffer
-    bool write_toggle;
+    bool write_toggle; // w
     u8 oam_dma;
-    NametableOffsets nametable_offsets;
     bool nmi_triggered;
     bool nmi_edge_detector;
     bool should_trigger_nmi;
+    u8 nametable_byte;
+    u8 attribute_byte;
+    u8 pattern_low_byte;
+    u8 pattern_high_byte;
+    u16 pattern_data_shift_registers[2];
+    u8 attribute_data_latch;
+    uint64_t tile_data;
 } PPU;
 
 void ppu_init(PPU* self, Cart* cart, Mapper* mapper);

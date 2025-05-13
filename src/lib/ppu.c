@@ -31,7 +31,13 @@ inline void ppu_clear_bg_mask(PPU* self) {
     memset(self->opaque_bg_mask, false, sizeof(self->opaque_bg_mask));
 }
 
-NametableOffsets ppu_get_nametable_offsets(PPU* self, u8 base_nametable);
+void ppu_reset(PPU* self) {
+    self->dots = 340;
+    self->scanlines = 240;
+    self->frame_count = 0;
+    ppu_write_register(self, 0x2000, 0);
+    ppu_write_register(self, 0x2001, 0);
+}
 
 void ppu_init(PPU* self, Cart *cart, Mapper* mapper) {
     self->scanlines = 0;
@@ -48,16 +54,26 @@ void ppu_init(PPU* self, Cart *cart, Mapper* mapper) {
     self->oam_addr_reg = 0;
     self->scroll_x = 0;
     self->scroll_y = 0;
-    self->vram_addr = 0;
-    self->vram_internal_buffer = 0;
+    self->v_reg = 0;
+    self->t_reg = 0;
+    self->x_reg = 0;
+    self->data_buffer = 0;
     self->write_toggle = false;
     self->oam_dma = 0;
-    self->nametable_offsets = ppu_get_nametable_offsets(self, self->ctrl_reg & PPU_CTRL_BASE_NAMETABLE_ADDR);
     self->nmi_edge_detector = false;
     self->should_trigger_nmi = false;
     self->nmi_triggered = false;
+    self->nametable_byte = 0;
+    self->attribute_byte = 0;
+    self->pattern_low_byte = 0;
+    self->pattern_high_byte = 0;
+    self->pattern_data_shift_registers[0] = 0;
+    self->pattern_data_shift_registers[1] = 0;
+    self->attribute_data_latch = 0;
+    self->tile_data = 0;
     ppu_clear_frame(self);
     ppu_clear_bg_mask(self);
+    ppu_reset(self);
 }
 
 void ppu_free(PPU* self) {}
@@ -70,6 +86,10 @@ void ppu_detect_nmi_edge(PPU* self) {
     }
 
     self->nmi_edge_detector = new_state;
+}
+
+inline void ppu_increment_vram_addr(PPU* self) {
+    self->v_reg += self->ctrl_reg & PPU_CTRL_VRAM_INCREMENT ? 32 : 1;
 }
 
 u8 ppu_read_register(PPU* self, u16 addr) {
@@ -85,9 +105,9 @@ u8 ppu_read_register(PPU* self, u16 addr) {
             return self->oam[self->oam_addr_reg];
         }
         case 0x2007: {
-            u8 value = self->vram_internal_buffer;
-            self->vram_internal_buffer = ppu_read(self, self->vram_addr);
-            self->vram_addr += self->ctrl_reg & PPU_CTRL_VRAM_INCREMENT ? 32 : 1;
+            u8 value = self->data_buffer;
+            self->data_buffer = ppu_read(self, self->v_reg);
+            ppu_increment_vram_addr(self);
             return value;
         }
         default: return 0;
@@ -97,13 +117,9 @@ u8 ppu_read_register(PPU* self, u16 addr) {
 void ppu_write_register(PPU* self, u16 addr, u8 value) {
     switch (addr) {
         case 0x2000: {
-            u8 prev_base_nametable = self->ctrl_reg & PPU_CTRL_BASE_NAMETABLE_ADDR;
             self->ctrl_reg = value;
-
-            if ((value & PPU_CTRL_BASE_NAMETABLE_ADDR) != prev_base_nametable) {
-                self->nametable_offsets = ppu_get_nametable_offsets(self, self->ctrl_reg & PPU_CTRL_BASE_NAMETABLE_ADDR);
-            }
-
+            // t: ...GH.. ........ <- d: ......GH
+            self->t_reg = (u16)(self->t_reg & 0xF3FF) | (u16)((u16)(value & 0b11) << 10);
             ppu_detect_nmi_edge(self);
             break;
         }
@@ -121,30 +137,40 @@ void ppu_write_register(PPU* self, u16 addr, u8 value) {
             break;
         }
         case 0x2005: {
-            if (self->write_toggle) {
-                self->scroll_y = value;
-            } else {
+            if (!self->write_toggle) {
                 self->scroll_x = value;
+                // t: ....... ...ABCDE <- d: ABCDE...
+                // x:              FGH <- d: .....FGH
+                self->t_reg = (self->t_reg & 0xFFE0) | ((u16)value >> 3);
+                self->x_reg = value & 0b111;
+            } else {
+                self->scroll_y = value;
+                // t: FGH..AB CDE..... <- d: ABCDEFGH
+                self->t_reg = (u16)(self->t_reg & 0x8FFF) | (u16)(((u16)value & 0b111) << 12);
+                self->t_reg = (u16)(self->t_reg & 0xFC1F) | (u16)(((u16)value & 0b11111000) << 2);
             }
 
             self->write_toggle = !self->write_toggle;
             break;
         }
         case 0x2006: {
-            if (self->write_toggle) {
-                // low byte
-                self->vram_addr = (self->vram_addr & 0xff00) | value;
+            if (!self->write_toggle) {
+                // t: .CDEFGH ........ <- d: ..CDEFGH
+                // t: Z...... ........ <- 0 (bit Z is cleared)
+                self->t_reg = ((self->t_reg & 0x80FF) | ((u16)(value & 0b111111) << 8)) & 0x7FFF;
             } else {
-                // high byte
-                self->vram_addr = ((((u16)value) << 8) & 0xff00) | (self->vram_addr & 0xff);
+                // t: ....... ABCDEFGH <- d: ABCDEFGH
+                // v: <...all bits...> <- t: <...all bits...>
+                self->t_reg = (self->t_reg & 0xFF00) | ((u16)value);
+                self->v_reg = self->t_reg;
             }
 
             self->write_toggle = !self->write_toggle;
             break;
         }
         case 0x2007: {
-            ppu_write(self, self->vram_addr, value);
-            self->vram_addr += self->ctrl_reg & PPU_CTRL_VRAM_INCREMENT ? 32 : 1;
+            ppu_write(self, self->v_reg, value);
+            ppu_increment_vram_addr(self);
             break;
         }
     }
@@ -219,7 +245,7 @@ u8 ppu_read(PPU* self, u16 addr) {
     if (addr < 0x2000) {
         return ppu_read_chr_rom(self, addr);
     }
-    
+
     if (addr < 0x3f00) {
         return self->nametable[ppu_nametable_mirrored_addr(self, addr)];
     }
@@ -227,7 +253,7 @@ u8 ppu_read(PPU* self, u16 addr) {
     if (addr == 0x3f10 || addr == 0x3f14 || addr == 0x3f18 || addr == 0x3f1c) {
         return self->palette_table[(addr - 0x3f10) & 31];
     }
-    
+
     if (addr < 0x4000) {
         return self->palette_table[(addr - 0x3f00) & 31];
     }
@@ -251,9 +277,10 @@ void ppu_set_pixel(PPU* self, usize x, usize y, u8 palette_color) {
     usize index = (y * SCREEN_WIDTH + x) * 3;
 
     if (index < SCREEN_WIDTH * SCREEN_HEIGHT * 3) {
-        u8 r = COLOR_PALETTE[palette_color * 3];
-        u8 g = COLOR_PALETTE[palette_color * 3 + 1];
-        u8 b = COLOR_PALETTE[palette_color * 3 + 2];
+        usize offset = palette_color * 3;
+        u8 r = COLOR_PALETTE[offset];
+        u8 g = COLOR_PALETTE[offset + 1];
+        u8 b = COLOR_PALETTE[offset + 2];
 
         self->frame[index] = r;
         self->frame[index + 1] = g;
@@ -292,7 +319,7 @@ void ppu_draw_background_tile(
             u8 bit0 = plane1 & 1;
             u8 bit1 = plane2 & 1;
             u8 color_index = (u8)((bit1 << 1) | bit0);
-            
+
             plane1 >>= 1;
             plane2 >>= 1;
 
@@ -350,7 +377,7 @@ void ppu_draw_sprite_tile(
             u8 bit0 = plane1 & 1;
             u8 bit1 = plane2 & 1;
             u8 color_index = (u8)((bit1 << 1) | bit0);
-            
+
             plane1 >>= 1;
             plane2 >>= 1;
 
@@ -399,90 +426,216 @@ void ppu_render_sprites(PPU* self) {
 inline bool ppu_sprite_zero_hit(PPU* self) {
     u8 sprite0_y = self->oam[0];
     u8 sprite0_x = self->oam[3];
-    return (self->mask_reg & (PPU_MASK_SHOW_SPRITES | PPU_MASK_SHOW_BACKGROUND)) && (sprite0_y == self->scanlines) && (sprite0_x == self->dots);
+    return (self->mask_reg & (PPU_MASK_SHOW_SPRITES | PPU_MASK_SHOW_BACKGROUND)) && (sprite0_y + 6 == self->scanlines) && (sprite0_x + 1 == self->dots);
 }
 
-NametableOffsets ppu_get_nametable_offsets(PPU* self, u8 base_nametable) {
-    usize nametable1_offset = 0;
-    usize nametable2_offset = 0;
+void ppu_scroll_increment_coarse_x(PPU* self) {
+    // if we are at the end of the nametable (32 tiles wide)
+    if ((self->v_reg & PPU_V_COARSE_X_SCROLL) == 31) {
+        self->v_reg &= ~PPU_V_COARSE_X_SCROLL; // set coarse X to 0
+        self->v_reg ^= 0x0400; // switch horizontal nametable
+    } else {
+        self->v_reg += 1; // scroll to the right by 1 tile
+    }
+}
 
-    switch (self->cart->header.mirroring) {
-        case NT_MIRRORING_VERTICAL: {
-            if ((base_nametable & 1) == 0) {
-                nametable1_offset = 0x000;
-                nametable2_offset = 0x400;
-            } else {
-                nametable1_offset = 0x400;
-                nametable2_offset = 0x000;
-            }
-            break;
+void ppu_scroll_increment_y(PPU* self) {
+    // if fine y < 7
+    if ((self->v_reg & PPU_V_FINE_Y_SCROLL) != PPU_V_FINE_Y_SCROLL) {
+        self->v_reg += 0x1000; // increment fine Y
+    } else {
+        self->v_reg &= ~PPU_V_FINE_Y_SCROLL; // fine Y = 0
+        u16 coarse_y = (self->v_reg & PPU_V_COARSE_Y_SCROLL) >> 5;
+        // if we are at the end of the nametable (30 tiles high)
+        if (coarse_y == 29) {
+            coarse_y = 0;
+            self->v_reg ^= 0x0800; // switch vertical nametable
+        } else if (coarse_y == 31) {
+            coarse_y = 0; // coarse Y = 0, nametable not switched
+        } else {
+            coarse_y += 1; // increment coarse Y
         }
-        case NT_MIRRORING_HORIZONTAL: {
-            switch (base_nametable) {
-                case 0:
-                case 1:
-                    nametable1_offset = 0x000;
-                    nametable2_offset = 0x400;
-                    break;
-                case 2:
-                case 3:
-                    nametable1_offset = 0x400;
-                    nametable2_offset = 0x000;
-                    break;
-            }
-            break;
-        }
-        case NT_MIRRORING_ONE_SCREEN_LOWER_BANK:
-            nametable1_offset = 0x000;
-            nametable2_offset = 0x000;
-            break;
-        case NT_MIRRORING_ONE_SCREEN_UPPER_BANK:
-            nametable1_offset = 0x400;
-            nametable2_offset = 0x400;
-            break;
-        case NT_MIRRORING_FOUR_SCREEN:
-            switch (base_nametable) {
-                case 0:
-                    nametable1_offset = 0x000;
-                    nametable2_offset = 0x400;
-                    break;
-                case 1:
-                    nametable1_offset = 0x400;
-                    nametable2_offset = 0x800;
-                    break;
-                case 2:
-                    nametable1_offset = 0x800;
-                    nametable2_offset = 0xc00;
-                    break;
-                case 3:
-                    nametable1_offset = 0xc00;
-                    nametable2_offset = 0x800;
-                    break;
-            }
-            break;
+
+        // put coarse Y back into v
+        self->v_reg = (u16)((self->v_reg & ~PPU_V_COARSE_Y_SCROLL) | (coarse_y << 5));
+    }
+}
+
+inline void ppu_scroll_copy_x(PPU* self) {
+    // copy all bits related to horizontal position from t to v:
+    // v: ....A.. ...BCDEF <- t: ....A.. ...BCDEF
+    self->v_reg = (self->v_reg & 0xFBE0) | (self->t_reg & 0x041F);
+}
+
+inline void ppu_scroll_copy_y(PPU* self) {
+    // copy the vertical bits from t to v
+    // v: GHIA.BC DEF..... <- t: GHIA.BC DEF.....
+    self->v_reg = (self->v_reg & 0x841F) | (self->t_reg & 0x7BE0);
+}
+
+void ppu_fetch_nametable_byte(PPU* self) {
+    // Tile and attribute fetching
+    // https://www.nesdev.org/wiki/PPU_scrolling
+    u16 tile_addr = 0x2000 | (self->v_reg & 0x0FFF);
+    u16 mirrored_addr = ppu_nametable_mirrored_addr(self, tile_addr);
+    self->nametable_byte = self->nametable[mirrored_addr];
+}
+
+void ppu_fetch_attribute_byte(PPU* self) {
+    u16 attribute_addr = 0x23C0 | (self->v_reg & 0x0C00) | ((self->v_reg >> 4) & 0x38) | ((self->v_reg >> 2) & 0x07);
+    u16 mirrored_addr = ppu_nametable_mirrored_addr(self, attribute_addr);
+    usize shift = ((self->v_reg >> 4) & 4) | (self->v_reg & 2);
+    self->attribute_byte = (self->nametable[mirrored_addr] >> shift) & 0b11;
+}
+
+void ppu_store_tile_data(PPU* self) {
+    // self->pattern_data_shift_registers[0] = ((u16)(self->pattern_low_byte << 8)) | (self->pattern_data_shift_registers[0] & 0x00FF);
+    // self->pattern_data_shift_registers[1] = ((u16)(self->pattern_high_byte << 8)) | (self->pattern_data_shift_registers[1] & 0x00FF);
+    // self->attribute_data_latch = self->attribute_byte;
+
+    u32 data = 0;
+    u16 attr = (u16)((u16)self->attribute_byte << 2);
+
+    for (usize i = 0; i < 8; i++) {
+        u8 p1 = (self->pattern_low_byte & (1 << 7)) >> 7;
+        u8 p2 = (self->pattern_high_byte & (1 << 7)) >> 6;
+        u8 pattern = p2 | p1;
+        self->pattern_low_byte <<= 1;
+        self->pattern_high_byte <<= 1;
+        data <<= 4;
+        data |= (u32)(attr | pattern);
     }
 
-    return (NametableOffsets) { nametable1_offset, nametable2_offset };
+    self->tile_data |= (uint64_t)data;
 }
 
-bool ppu_step(PPU* self, usize cycles) {
-    bool new_frame = false;
+void ppu_fetch_pattern_bytes(PPU* self) {
+    u16 bank_offset = self->ctrl_reg & PPU_CTRL_BACKGROUND_PATTERN_TABLE ? 0x1000 : 0;
+    u8 tile = self->nametable_byte;
+    u8 fine_y = (u8)((self->v_reg & PPU_V_FINE_Y_SCROLL) >> 12);
+    u16 offset = bank_offset + tile * 16 + (u16)fine_y;
+    self->pattern_low_byte = ppu_read_chr_rom(self, offset);
+    self->pattern_high_byte = ppu_read_chr_rom(self, offset + 8);
+}
 
+void ppu_render_background_pixel(PPU* self) {
+    usize x = (usize)(self->dots - 1);
+    usize y = (usize)(self->scanlines);
+    u8 palette_ram_address_offset = 0;
+    bool is_opaque = false;
+
+    if (self->mask_reg & PPU_MASK_SHOW_BACKGROUND) {
+        u8 pixel_attribute_and_pattern = ((self->tile_data >> 32) >> ((7 - self->x_reg) * 4)) & 0xF;
+
+        if ((pixel_attribute_and_pattern & 3) != 0) { // If pattern bits (PP) are not 00 (pixel is not transparent)
+            palette_ram_address_offset = pixel_attribute_and_pattern; // Use AAPP as the offset (0-15)
+            is_opaque = true;
+        }
+    }
+
+    // Read the NES palette index (0-63) from PPU's palette RAM
+    u8 nes_palette_index = self->palette_table[palette_ram_address_offset] & 63; // Mask to 6 bits
+
+    ppu_set_pixel(self, x, y, nes_palette_index);
+
+    self->opaque_bg_mask[y * SCREEN_WIDTH + x] = is_opaque;
+}
+
+void ppu_tick(PPU* self) {
     if (self->should_trigger_nmi && (self->ctrl_reg & PPU_CTRL_NMI_ENABLE) && (self->status_reg & PPU_STATUS_VBLANK)) {
         self->should_trigger_nmi = false;
         self->nmi_triggered = true;
     }
 
+    bool rendering_enabled = (self->mask_reg & PPU_MASK_SHOW_BACKGROUND) || (self->mask_reg & PPU_MASK_SHOW_SPRITES);
+
+    if (rendering_enabled && (self->frame_count & 1) && self->scanlines == 261 && self->dots == 339) {
+        // skip cycle 339 of pre-render scanline
+        self->dots = 0;
+        self->scanlines = 0;
+        self->frame_count++;
+        return;
+    }
+
+    self->dots++;
+
+    if (self->dots > 340) {
+        self->dots = 0;
+        self->scanlines++;
+
+        if (self->scanlines > 261) {
+            self->scanlines = 0;
+            self->frame_count++;
+        }
+    }
+}
+
+bool ppu_step(PPU* self, usize cycles) {
+    bool new_frame = false;
+
     for (usize i = 0; i < cycles; i++) {
+        ppu_tick(self);
+
+        bool show_background = self->mask_reg & PPU_MASK_SHOW_BACKGROUND;
+        bool show_sprites = self->mask_reg & PPU_MASK_SHOW_SPRITES;
+        bool rendering_enabled = show_background || show_sprites;
+        bool pre_render_line = self->scanlines == 261;
+        bool visible_line = self->scanlines < 240;
+        bool pre_fetch_cycle = self->dots >= 321 && self->dots <= 336; // fetch first 2 tiles of the next line
+        bool visible_cycle = self->dots >= 1 && self->dots <= 256;
+        bool fetch_cycle = pre_fetch_cycle || visible_cycle;
+        bool render_line = pre_render_line || visible_line;
+
         if (ppu_sprite_zero_hit(self)) {
             self->status_reg |= PPU_STATUS_SPRITE0_HIT;
         }
 
-        if (self->scanlines < 240 && self->dots == 256 && (self->mask_reg & PPU_MASK_SHOW_BACKGROUND) && (self->scanlines & 7) == 0) {
-            usize bank_offset = (self->ctrl_reg & PPU_CTRL_BACKGROUND_PATTERN_TABLE) ? 0x1000 : 0;
-            usize row = self->scanlines >> 3;
-            ppu_render_row(self, row, self->nametable_offsets.nametable1_offset, bank_offset, -((int)self->scroll_x), self->scroll_x, SCREEN_WIDTH);
-            ppu_render_row(self, row, self->nametable_offsets.nametable2_offset, bank_offset, SCREEN_WIDTH - (int)self->scroll_x, 0, self->scroll_x);
+        if (show_background) {
+            if (visible_cycle && visible_line) {
+                ppu_render_background_pixel(self);
+            }
+
+            if (render_line && fetch_cycle) {
+                self->tile_data <<= 4;
+
+                switch (self->dots & 7) {
+                    case 1: {
+                        ppu_fetch_nametable_byte(self);
+                        break;
+                    }
+                    case 3: {
+                        ppu_fetch_attribute_byte(self);
+                        break;
+                    }
+                    case 7: {
+                        ppu_fetch_pattern_bytes(self);
+                        break;
+                    }
+                    case 0: {
+                        ppu_store_tile_data(self);
+                        break;
+                    }
+                    default: {
+                        break;
+                    }
+                }
+            }
+
+            if (pre_render_line && self->dots >= 280 && self->dots <= 304) {
+                ppu_scroll_copy_y(self);
+            }
+
+            if (render_line) {
+                if (fetch_cycle && (self->dots & 7) == 0) {
+                    ppu_scroll_increment_coarse_x(self);
+                }
+
+                if (self->dots == 256) {
+                    ppu_scroll_increment_y(self);
+                } else if (self->dots == 257) {
+                    ppu_scroll_copy_x(self);
+                }
+            }
         }
 
         if (self->dots == 1) {
@@ -490,26 +643,11 @@ bool ppu_step(PPU* self, usize cycles) {
                 new_frame = true;
                 self->frame_count++;
                 self->status_reg |= PPU_STATUS_VBLANK;
-                self->status_reg &= ~PPU_STATUS_SPRITE0_HIT;
                 ppu_detect_nmi_edge(self);
-            } else if (self->scanlines == 261) {
+            } else if (pre_render_line) {
                 self->status_reg &= ~(PPU_STATUS_VBLANK | PPU_STATUS_SPRITE0_HIT | PPU_STATUS_SPRITE_OVERFLOW);
-                self->scanlines = 0;
                 ppu_detect_nmi_edge(self);
-
-                if (self->cart->reset_nametable_hack) {
-                    // The status bar in Super Mario Bros flickers because of inaccurate scrolling handling
-                    // this hack fixes this without requiring expensive scrolling computations
-                    // see https://forums.nesdev.org/viewtopic.php?f=3&t=10762
-                    self->ctrl_reg &= ~PPU_CTRL_BASE_NAMETABLE_ADDR;
-                    self->nametable_offsets = ppu_get_nametable_offsets(self, self->ctrl_reg & PPU_CTRL_BASE_NAMETABLE_ADDR);
-                }
             }
-        }
-
-        if (++self->dots > 340) {
-            self->dots = 0;
-            self->scanlines++;
         }
     }
 
@@ -528,6 +666,6 @@ void ppu_render(PPU* self) {
     if (render_sp) {
         ppu_render_sprites(self);
     }
-    
+
     ppu_clear_bg_mask(self);
 }

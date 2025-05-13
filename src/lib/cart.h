@@ -10,7 +10,6 @@
 typedef struct {
     INES header;
     u32 hash;
-    bool reset_nametable_hack;
     u8* prg_rom;
     usize prg_size;
     u8* chr_rom;
