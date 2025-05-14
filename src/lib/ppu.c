@@ -69,8 +69,10 @@ void ppu_init(PPU* self, Cart *cart, Mapper* mapper) {
     self->pattern_high_byte = 0;
     self->pattern_data_shift_registers[0] = 0;
     self->pattern_data_shift_registers[1] = 0;
-    self->attribute_data_latch = 0;
-    self->tile_data = 0;
+    self->attribute_data_latches[0] = false;
+    self->attribute_data_latches[1] = false;
+    self->attribute_data_shift_registers[0] = 0;
+    self->attribute_data_shift_registers[1] = 0;
     ppu_clear_frame(self);
     ppu_clear_bg_mask(self);
     ppu_reset(self);
@@ -489,24 +491,10 @@ void ppu_fetch_attribute_byte(PPU* self) {
 }
 
 void ppu_store_tile_data(PPU* self) {
-    // self->pattern_data_shift_registers[0] = ((u16)(self->pattern_low_byte << 8)) | (self->pattern_data_shift_registers[0] & 0x00FF);
-    // self->pattern_data_shift_registers[1] = ((u16)(self->pattern_high_byte << 8)) | (self->pattern_data_shift_registers[1] & 0x00FF);
-    // self->attribute_data_latch = self->attribute_byte;
-
-    u32 data = 0;
-    u16 attr = (u16)((u16)self->attribute_byte << 2);
-
-    for (usize i = 0; i < 8; i++) {
-        u8 p1 = (self->pattern_low_byte & (1 << 7)) >> 7;
-        u8 p2 = (self->pattern_high_byte & (1 << 7)) >> 6;
-        u8 pattern = p2 | p1;
-        self->pattern_low_byte <<= 1;
-        self->pattern_high_byte <<= 1;
-        data <<= 4;
-        data |= (u32)(attr | pattern);
-    }
-
-    self->tile_data |= (uint64_t)data;
+    self->pattern_data_shift_registers[0] = (u16)(self->pattern_data_shift_registers[0] | self->pattern_low_byte);
+    self->pattern_data_shift_registers[1] = (u16)(self->pattern_data_shift_registers[1] | self->pattern_high_byte);
+    self->attribute_data_latches[0] = self->attribute_byte & 1;
+    self->attribute_data_latches[1] = self->attribute_byte & 2;
 }
 
 void ppu_fetch_pattern_bytes(PPU* self) {
@@ -521,23 +509,26 @@ void ppu_fetch_pattern_bytes(PPU* self) {
 void ppu_render_background_pixel(PPU* self) {
     usize x = (usize)(self->dots - 1);
     usize y = (usize)(self->scanlines);
-    u8 palette_ram_address_offset = 0;
+    u8 palette_index = 0;
     bool is_opaque = false;
 
     if (self->mask_reg & PPU_MASK_SHOW_BACKGROUND) {
-        u8 pixel_attribute_and_pattern = ((self->tile_data >> 32) >> ((7 - self->x_reg) * 4)) & 0xF;
+        u8 pattern0 = (u8)(self->pattern_data_shift_registers[0] >> (15 - self->x_reg)) & 1;
+        u8 pattern1 = (u8)(self->pattern_data_shift_registers[1] >> (15 - self->x_reg)) & 1;
+        u8 pattern = (u8)((pattern1 << 1) | pattern0);
+        u8 attr0 = (u8)(self->attribute_data_shift_registers[0] >> (7 - self->x_reg)) & 1;
+        u8 attr1 = (u8)(self->attribute_data_shift_registers[1] >> (7 - self->x_reg)) & 1;
+        u8 attr = (u8)((attr1 << 1) | attr0);
+        u8 pixel_attribute_and_pattern = (u8)((attr << 2) | pattern);
 
-        if ((pixel_attribute_and_pattern & 3) != 0) { // If pattern bits (PP) are not 00 (pixel is not transparent)
-            palette_ram_address_offset = pixel_attribute_and_pattern; // Use AAPP as the offset (0-15)
+        if (pattern != 0) { // if pixel is not transparent
+            palette_index = pixel_attribute_and_pattern; // Use AAPP as the offset (0-15)
             is_opaque = true;
         }
     }
 
-    // Read the NES palette index (0-63) from PPU's palette RAM
-    u8 nes_palette_index = self->palette_table[palette_ram_address_offset] & 63; // Mask to 6 bits
-
-    ppu_set_pixel(self, x, y, nes_palette_index);
-
+    u8 palette_color = self->palette_table[palette_index] & 63; // Mask to 6 bits
+    ppu_set_pixel(self, x, y, palette_color);
     self->opaque_bg_mask[y * SCREEN_WIDTH + x] = is_opaque;
 }
 
@@ -596,7 +587,12 @@ bool ppu_step(PPU* self, usize cycles) {
             }
 
             if (render_line && fetch_cycle) {
-                self->tile_data <<= 4;
+                self->attribute_data_shift_registers[0] <<= 1;
+                self->attribute_data_shift_registers[1] <<= 1;
+                self->attribute_data_shift_registers[0] |= (u16)self->attribute_data_latches[0];
+                self->attribute_data_shift_registers[1] |= (u16)self->attribute_data_latches[1];
+                self->pattern_data_shift_registers[0] <<= 1;
+                self->pattern_data_shift_registers[1] <<= 1;
 
                 switch (self->dots & 7) {
                     case 1: {

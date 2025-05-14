@@ -62,8 +62,8 @@ typedef struct {
     u8 pattern_low_byte;
     u8 pattern_high_byte;
     u16 pattern_data_shift_registers[2];
-    u8 attribute_data_latch;
-    uint64_t tile_data;
+    bool attribute_data_latches[2];
+    u8 attribute_data_shift_registers[2];
 } PPU;
 
 void ppu_init(PPU* self, Cart* cart, Mapper* mapper);
