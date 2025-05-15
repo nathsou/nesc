@@ -23,12 +23,8 @@ const u8 COLOR_PALETTE[] = {
    0x99, 0xFF, 0xFC, 0xDD, 0xDD, 0xDD, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
 };
 
-inline void ppu_clear_frame(PPU* self) {
+static inline void ppu_clear_frame(PPU* self) {
     memset(self->frame, 0, sizeof(self->frame));
-}
-
-inline void ppu_clear_bg_mask(PPU* self) {
-    memset(self->opaque_bg_mask, false, sizeof(self->opaque_bg_mask));
 }
 
 void ppu_reset(PPU* self) {
@@ -73,8 +69,8 @@ void ppu_init(PPU* self, Cart *cart, Mapper* mapper) {
     self->attribute_data_latches[1] = false;
     self->attribute_data_shift_registers[0] = 0;
     self->attribute_data_shift_registers[1] = 0;
+    self->visible_scanline_sprites = 0;
     ppu_clear_frame(self);
-    ppu_clear_bg_mask(self);
     ppu_reset(self);
 }
 
@@ -90,7 +86,7 @@ void ppu_detect_nmi_edge(PPU* self) {
     self->nmi_edge_detector = new_state;
 }
 
-inline void ppu_increment_vram_addr(PPU* self) {
+static inline void ppu_increment_vram_addr(PPU* self) {
     self->v_reg += self->ctrl_reg & PPU_CTRL_VRAM_INCREMENT ? 32 : 1;
 }
 
@@ -234,11 +230,11 @@ u16 ppu_nametable_mirrored_addr(PPU* self, u16 addr) {
     return 0;
 }
 
-inline u8 ppu_read_chr_rom(PPU* self, u16 addr) {
+static inline u8 ppu_read_chr_rom(PPU* self, u16 addr) {
     return self->mapper->read(self->mapper, addr);
 }
 
-inline void ppu_write_chr_rom(PPU* self, u16 addr, u8 value) {
+static inline void ppu_write_chr_rom(PPU* self, u16 addr, u8 value) {
     self->mapper->write(self->mapper, addr, value);
 }
 
@@ -290,147 +286,6 @@ void ppu_set_pixel(PPU* self, usize x, usize y, u8 palette_color) {
     }
 }
 
-usize ppu_get_background_palette_index(PPU* self, usize tile_col, usize tile_row, usize nametable_offset) {
-    usize attr_table_index = (tile_row / 4) * 8 + (tile_col / 4);
-    // the attribute table is stored after the nametable (960 bytes)
-    usize attr_table_byte = self->nametable[nametable_offset + 960 + attr_table_index];
-    usize block_x = (tile_col % 4) / 2;
-    usize block_y = (tile_row % 4) / 2;
-    usize shift = block_y * 4 + block_x * 2;
-
-    return ((attr_table_byte >> shift) & 0b11) * BYTES_PER_PALETTE;
-}
-
-void ppu_draw_background_tile(
-    PPU* self,
-    usize n,
-    usize x,
-    usize y,
-    usize bank_offset,
-    usize palette_idx,
-    int shift_x,
-    int min_x,
-    int max_x
-) {
-    for (usize tile_y = 0; tile_y < 8; tile_y++) {
-        usize chr_rom_offset = bank_offset + n * 16 + tile_y;
-        u8 plane1 = ppu_read_chr_rom(self, (u16)chr_rom_offset);
-        u8 plane2 = ppu_read_chr_rom(self, (u16)(chr_rom_offset + 8));
-
-        for (usize tile_x = 0; tile_x < 8; tile_x++) {
-            u8 bit0 = plane1 & 1;
-            u8 bit1 = plane2 & 1;
-            u8 color_index = (u8)((bit1 << 1) | bit0);
-
-            plane1 >>= 1;
-            plane2 >>= 1;
-
-            u8 palette_offset;
-            bool is_universal_bg_color = color_index == 0;
-
-            if (is_universal_bg_color) {
-                palette_offset = self->palette_table[0];
-            } else {
-                palette_offset = self->palette_table[palette_idx + color_index];
-            }
-
-            int nametable_x = (int)x + ((int)(7 - (int)tile_x));
-
-            if (nametable_x >= min_x && nametable_x < max_x) {
-                usize screen_x = (usize)(shift_x + nametable_x);
-                usize screen_y = y + tile_y;
-                ppu_set_pixel(self, screen_x, screen_y, palette_offset);
-
-                if (!is_universal_bg_color && screen_x >= 0 && screen_x < SCREEN_WIDTH) {
-                    self->opaque_bg_mask[screen_y * SCREEN_WIDTH + screen_x] = true;
-                }
-            }
-        }
-    }
-}
-
-void ppu_render_row(PPU* self, usize y, usize nametable_offset, usize bank_offset, int shift_x, int min_x, int max_x) {
-    usize start_x = !(self->mask_reg & PPU_MASK_SHOW_BACKGROUND_LEFTMOST);
-
-    for (usize i = start_x; i < TILES_PER_ROW; i++) {
-        u8 tile = self->nametable[nametable_offset + y * TILES_PER_ROW + i];
-        usize palette_index = ppu_get_background_palette_index(self, i, y, nametable_offset);
-        ppu_draw_background_tile(self, tile, i * 8, y * 8, bank_offset, palette_index, shift_x, min_x, max_x);
-    }
-}
-
-void ppu_draw_sprite_tile(
-    PPU* self,
-    usize n,
-    usize x,
-    usize y,
-    usize bank_offset,
-    usize palette_idx,
-    bool flip_x,
-    bool flip_y,
-    bool behind_bg
-) {
-    for (usize tile_y = 0; tile_y < 8; tile_y++) {
-        usize chr_rom_offset = bank_offset + n * 16 + tile_y;
-        u8 plane1 = ppu_read_chr_rom(self, (u16)chr_rom_offset);
-        u8 plane2 = ppu_read_chr_rom(self, (u16)(chr_rom_offset + 8));
-
-        for (usize tile_x = 0; tile_x < 8; tile_x++) {
-            u8 bit0 = plane1 & 1;
-            u8 bit1 = plane2 & 1;
-            u8 color_index = (u8)((bit1 << 1) | bit0);
-
-            plane1 >>= 1;
-            plane2 >>= 1;
-
-            if (color_index != 0) {
-                u8 palette_offset = self->palette_table[palette_idx + color_index - 1];
-                u8 flipped_x = (u8)(flip_x ? tile_x : 7 - tile_x);
-                u8 flipped_y = (u8)(flip_y ? 7 - tile_y : tile_y);
-                usize screen_x = x + flipped_x;
-                usize screen_y = y + flipped_y;
-
-                bool is_hidden = behind_bg && self->opaque_bg_mask[screen_y * SCREEN_WIDTH + screen_x];
-
-                if (!is_hidden && screen_x < SCREEN_WIDTH) {
-                    ppu_set_pixel(self, screen_x, screen_y, palette_offset);
-                }
-            }
-        }
-    }
-}
-
-void ppu_render_sprites(PPU* self) {
-    // https://www.nesdev.org/wiki/PPU_OAM
-    usize bank_offset = self->ctrl_reg & PPU_CTRL_SPRITE_PATTERN_TABLE ? 0x1000 : 0;
-    bool draw_leftmost_tile = self->mask_reg & PPU_MASK_SHOW_SPRITES_LEFTMOST;
-
-    // sprites with lower OAM indices are drawn in front
-    for (int i = 252; i >= 0; i -= 4) {
-        usize y = (usize)self->oam[i] + 1;
-        u8 tile = self->oam[i + 1];
-        u8 attr = self->oam[i + 2];
-        usize x = (usize)self->oam[i + 3];
-
-        if ((!draw_leftmost_tile && x == 0) || (y == SCREEN_HEIGHT)) {
-            continue;
-        }
-
-        bool flip_x = attr & 0b01000000;
-        bool flip_y = attr & 0b10000000;
-        bool behind_bg = attr & 0b00100000;
-
-        u8 palette_index = SPRITES_PALETTES_OFFSET + (attr & 0b11) * BYTES_PER_PALETTE;
-        ppu_draw_sprite_tile(self, tile, x, y, bank_offset, palette_index, flip_x, flip_y, behind_bg);
-    }
-}
-
-inline bool ppu_sprite_zero_hit(PPU* self) {
-    u8 sprite0_y = self->oam[0];
-    u8 sprite0_x = self->oam[3];
-    return (self->mask_reg & (PPU_MASK_SHOW_SPRITES | PPU_MASK_SHOW_BACKGROUND)) && (sprite0_y + 6 == self->scanlines) && (sprite0_x + 1 == self->dots);
-}
-
 void ppu_scroll_increment_coarse_x(PPU* self) {
     // if we are at the end of the nametable (32 tiles wide)
     if ((self->v_reg & PPU_V_COARSE_X_SCROLL) == 31) {
@@ -463,13 +318,13 @@ void ppu_scroll_increment_y(PPU* self) {
     }
 }
 
-inline void ppu_scroll_copy_x(PPU* self) {
+static inline void ppu_scroll_copy_x(PPU* self) {
     // copy all bits related to horizontal position from t to v:
     // v: ....A.. ...BCDEF <- t: ....A.. ...BCDEF
     self->v_reg = (self->v_reg & 0xFBE0) | (self->t_reg & 0x041F);
 }
 
-inline void ppu_scroll_copy_y(PPU* self) {
+static inline void ppu_scroll_copy_y(PPU* self) {
     // copy the vertical bits from t to v
     // v: GHIA.BC DEF..... <- t: GHIA.BC DEF.....
     self->v_reg = (self->v_reg & 0x841F) | (self->t_reg & 0x7BE0);
@@ -506,30 +361,175 @@ void ppu_fetch_pattern_bytes(PPU* self) {
     self->pattern_high_byte = ppu_read_chr_rom(self, offset + 8);
 }
 
-void ppu_render_background_pixel(PPU* self) {
+typedef struct {
+    u8 palette_color;
+    u8 is_opaque;
+} BackgroundPixelData;
+
+BackgroundPixelData ppu_get_background_pixel(PPU* self) {
+    BackgroundPixelData pixel_data = {0};
     usize x = (usize)(self->dots - 1);
-    usize y = (usize)(self->scanlines);
-    u8 palette_index = 0;
-    bool is_opaque = false;
 
-    if (self->mask_reg & PPU_MASK_SHOW_BACKGROUND) {
-        u8 pattern0 = (u8)(self->pattern_data_shift_registers[0] >> (15 - self->x_reg)) & 1;
-        u8 pattern1 = (u8)(self->pattern_data_shift_registers[1] >> (15 - self->x_reg)) & 1;
-        u8 pattern = (u8)((pattern1 << 1) | pattern0);
-        u8 attr0 = (u8)(self->attribute_data_shift_registers[0] >> (7 - self->x_reg)) & 1;
-        u8 attr1 = (u8)(self->attribute_data_shift_registers[1] >> (7 - self->x_reg)) & 1;
-        u8 attr = (u8)((attr1 << 1) | attr0);
-        u8 pixel_attribute_and_pattern = (u8)((attr << 2) | pattern);
+    if ((self->mask_reg & PPU_MASK_SHOW_BACKGROUND_LEFTMOST) || x > 7) {
+        usize y = (usize)(self->scanlines);
+        u8 palette_index = 0;
 
-        if (pattern != 0) { // if pixel is not transparent
-            palette_index = pixel_attribute_and_pattern; // Use AAPP as the offset (0-15)
-            is_opaque = true;
+        if (self->mask_reg & PPU_MASK_SHOW_BACKGROUND) {
+            u8 pattern0 = (u8)(self->pattern_data_shift_registers[0] >> (15 - self->x_reg)) & 1;
+            u8 pattern1 = (u8)(self->pattern_data_shift_registers[1] >> (15 - self->x_reg)) & 1;
+            u8 pattern = (u8)((pattern1 << 1) | pattern0);
+            u8 attr0 = (u8)(self->attribute_data_shift_registers[0] >> (7 - self->x_reg)) & 1;
+            u8 attr1 = (u8)(self->attribute_data_shift_registers[1] >> (7 - self->x_reg)) & 1;
+            u8 attr = (u8)((attr1 << 1) | attr0);
+            u8 pixel_attribute_and_pattern = (u8)((attr << 2) | pattern);
+
+            if (pattern != 0) { // if pixel is not transparent
+                palette_index = pixel_attribute_and_pattern; // Use AAPP as the offset (0-15)
+                pixel_data.is_opaque = true;
+            }
+        }
+
+        pixel_data.palette_color = self->palette_table[palette_index] & 63; // Mask to 6 bits
+    }
+
+    return pixel_data;
+}
+
+typedef struct {
+    u8 palette_color;
+    u8 tile_index;
+    bool behind_background;
+    bool is_opaque;
+} SpritePixelData;
+
+SpritePixelData ppu_get_sprite_pixel(PPU* self) {
+    SpritePixelData pixel_data = {0};
+    u16 x = (u16)(self->dots - 1);
+
+    if ((self->mask_reg & PPU_MASK_SHOW_SPRITES) && ((self->mask_reg & PPU_MASK_SHOW_SPRITES_LEFTMOST) || x > 7)) {
+        for (usize i = 0; i < self->visible_scanline_sprites; i++) {
+            SpriteData* s = &self->scanline_sprites[i];
+
+            if (x >= s->x && x < s->x + 8) {
+                u8 color_index = s->chr[x - s->x];
+
+                if (color_index != 0) {
+                    pixel_data.is_opaque = true;
+                    usize palette_index = SPRITES_PALETTES_OFFSET + s->palette_index * BYTES_PER_PALETTE + color_index - 1;
+                    pixel_data.palette_color = self->palette_table[palette_index] & 63;
+                    pixel_data.tile_index = s->tile_index;
+                    pixel_data.behind_background = s->behind_background;
+                    break;
+                }
+            }
         }
     }
 
-    u8 palette_color = self->palette_table[palette_index] & 63; // Mask to 6 bits
+    return pixel_data;
+}
+
+void ppu_render_pixel(PPU* self) {
+    usize x = (usize)(self->dots - 1);
+    usize y = (usize)self->scanlines;
+    BackgroundPixelData bg = ppu_get_background_pixel(self);
+    SpritePixelData sprite = ppu_get_sprite_pixel(self);
+
+    u8 palette_color;
+
+    if (!bg.is_opaque && !sprite.is_opaque) {
+        palette_color = self->palette_table[0] & 63; // Transparent pixel
+    } else if (sprite.is_opaque && (!sprite.behind_background || !bg.is_opaque)) {
+        palette_color = sprite.palette_color;
+    } else {
+        palette_color = bg.palette_color;
+    }
+
     ppu_set_pixel(self, x, y, palette_color);
-    self->opaque_bg_mask[y * SCREEN_WIDTH + x] = is_opaque;
+
+    // Sprite 0 hit detection
+    if (sprite.tile_index == 0 && sprite.is_opaque && bg.is_opaque && x < 255 && !(self->status_reg & PPU_STATUS_SPRITE0_HIT)) {
+        self->status_reg |= PPU_STATUS_SPRITE0_HIT;
+    }
+}
+
+void ppu_fetch_next_scanline_sprites(PPU* self) {
+    u8 count = 0; // number of visible sprites on the current scanline
+    u16 sprite_size = self->ctrl_reg & PPU_CTRL_SPRITE_SIZE ? 16 : 8;
+
+    for (usize i = 0; i < 64; i++) {
+        usize offset = i * 4;
+        u8 y = self->oam[offset];
+
+        if (self->scanlines >= y && self->scanlines < y + sprite_size) {
+            u8 row = (u8)(self->scanlines - y);
+            u8 tile_idx = self->oam[offset + 1];
+            u8 attr = self->oam[offset + 2];
+            u8 palette_idx = attr & 0b11;
+            bool behind_background = attr & 0b00100000;
+            bool flip_horizontally = attr & 0b01000000;
+            bool flip_vertically = attr & 0b10000000;
+            u8 x = self->oam[offset + 3];
+
+            u16 chr_bank = 0;
+
+            if (sprite_size == 8) {
+                chr_bank = self->ctrl_reg & PPU_CTRL_SPRITE_PATTERN_TABLE ? 0x1000 : 0;
+
+                if (flip_vertically) {
+                    row = 7 - row;
+                }
+            } else {
+                chr_bank = (tile_idx & 1) * 0x1000;
+                tile_idx &= 0xFE;
+
+                if (flip_vertically) {
+                    row = 15 - row;
+                }
+
+                if (row > 7) {
+                    row -= 8;
+                    tile_idx++;
+                }
+            }
+
+            if (count < 8) {
+                u16 tile_offset = chr_bank + tile_idx * 16 + row;
+                u8 chr_low = ppu_read_chr_rom(self, tile_offset);
+                u8 chr_high = ppu_read_chr_rom(self, tile_offset + 8);
+                u8 chr[8] = {0};
+
+                for (usize j = 0; j < 8; j++) {
+                    u8 mask = (u8)(1 << (flip_horizontally ? j : 7 - j));
+                    u8 p1 = (chr_low & mask) != 0;
+                    u8 p2 = (chr_high & mask) != 0;
+                    u8 pattern = (u8)((p2 << 1) | p1);
+                    chr[j] = pattern;
+                }
+
+                SpriteData* sprite_data = &self->scanline_sprites[count];
+                sprite_data->x = (u16)x;
+                sprite_data->tile_index = (u8)i;
+                sprite_data->palette_index = palette_idx;
+                sprite_data->behind_background = behind_background;
+                sprite_data->chr[0] = chr[0];
+                sprite_data->chr[1] = chr[1];
+                sprite_data->chr[2] = chr[2];
+                sprite_data->chr[3] = chr[3];
+                sprite_data->chr[4] = chr[4];
+                sprite_data->chr[5] = chr[5];
+                sprite_data->chr[6] = chr[6];
+                sprite_data->chr[7] = chr[7];
+
+                count++;
+            } else {
+                // TODO: implement sprite overflow hardware bug
+                self->status_reg |= PPU_STATUS_SPRITE_OVERFLOW;
+                break;
+            }
+        }
+    }
+
+    self->visible_scanline_sprites = count;
 }
 
 void ppu_tick(PPU* self) {
@@ -577,13 +577,9 @@ bool ppu_step(PPU* self, usize cycles) {
         bool fetch_cycle = pre_fetch_cycle || visible_cycle;
         bool render_line = pre_render_line || visible_line;
 
-        if (ppu_sprite_zero_hit(self)) {
-            self->status_reg |= PPU_STATUS_SPRITE0_HIT;
-        }
-
         if (show_background) {
             if (visible_cycle && visible_line) {
-                ppu_render_background_pixel(self);
+                ppu_render_pixel(self);
             }
 
             if (render_line && fetch_cycle) {
@@ -634,6 +630,16 @@ bool ppu_step(PPU* self, usize cycles) {
             }
         }
 
+
+        if (show_sprites && self->dots == 257) {
+            if (visible_line) {
+                ppu_fetch_next_scanline_sprites(self);
+            } else {
+                // clear secondary OAM
+                self->visible_scanline_sprites = 0;
+            }
+        }
+
         if (self->dots == 1) {
             if (self->scanlines == 241) {
                 new_frame = true;
@@ -648,20 +654,4 @@ bool ppu_step(PPU* self, usize cycles) {
     }
 
     return new_frame;
-}
-
-void ppu_render(PPU* self) {
-    self->oam_addr_reg = 0; // reset OAM address
-    bool render_bg = self->mask_reg & PPU_MASK_SHOW_BACKGROUND;
-    bool render_sp = self->mask_reg & PPU_MASK_SHOW_SPRITES;
-
-    if (!render_bg) {
-        ppu_clear_frame(self);
-    }
-
-    if (render_sp) {
-        ppu_render_sprites(self);
-    }
-
-    ppu_clear_bg_mask(self);
 }

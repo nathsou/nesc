@@ -4,12 +4,8 @@
 #include "types.h"
 #include "ines.h"
 
-#define HASH_OFFSET_BASIS 2166136261
-#define HASH_PRIME 16777619
-
 typedef struct {
     INES header;
-    u32 hash;
     u8* prg_rom;
     usize prg_size;
     u8* chr_rom;

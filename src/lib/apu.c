@@ -18,27 +18,27 @@ void length_counter_init(APU_LengthCounter* lc) {
     lc->counter = 0;
 }
 
-inline void length_counter_reset_to_zero(APU_LengthCounter* lc) {
+static inline void length_counter_reset_to_zero(APU_LengthCounter* lc) {
     lc->counter = 0;
 }
 
-inline void length_counter_step(APU_LengthCounter* lc) {
+static inline void length_counter_step(APU_LengthCounter* lc) {
     if (lc->enabled && lc->counter > 0) {
         lc->counter--;
     }
 }
 
-inline void length_counter_set(APU_LengthCounter* lc, u8 val) {
+static inline void length_counter_set(APU_LengthCounter* lc, u8 val) {
     lc->counter = LENGTH_LOOKUP[val];
 }
 
 // Set enabled status
-inline void length_counter_set_enabled(APU_LengthCounter* lc, bool enabled) {
+static inline void length_counter_set_enabled(APU_LengthCounter* lc, bool enabled) {
     lc->enabled = enabled;
 }
 
 // Check if counter is zero
-inline bool length_counter_is_zero(const APU_LengthCounter* lc) {
+static inline bool length_counter_is_zero(const APU_LengthCounter* lc) {
     return lc->counter == 0;
 }
 
@@ -49,7 +49,7 @@ void timer_init(APU_Timer* self) {
     self->period = 0;
 }
 
-inline bool timer_step(APU_Timer* self) {
+static inline bool timer_step(APU_Timer* self) {
     if (self->counter == 0) {
         self->counter = self->period;
         return true;
@@ -88,7 +88,7 @@ void envelope_step(APU_Envelope* self) {
     }
 }
 
-inline u8 envelope_output(const APU_Envelope* self) {
+static inline u8 envelope_output(const APU_Envelope* self) {
     return self->constant_mode ? self->constant_volume : self->decay;
 }
 
@@ -142,11 +142,11 @@ void pulse_step_timer(APU_Pulse* self) {
     }
 }
 
-inline void pulse_step_length_counter(APU_Pulse* self) {
+static inline void pulse_step_length_counter(APU_Pulse* self) {
     length_counter_step(&self->length_counter);
 }
 
-inline void pulse_step_envelope(APU_Pulse* self) {
+static inline void pulse_step_envelope(APU_Pulse* self) {
     envelope_step(&self->envelope);
 }
 
@@ -297,7 +297,7 @@ void triangle_step_linear_counter(APU_Triangle* tc) {
     }
 }
 
-inline void triangle_step_length_counter(APU_Triangle* tc) {
+static inline void triangle_step_length_counter(APU_Triangle* tc) {
     length_counter_step(&tc->length_counter);
 }
 
@@ -484,19 +484,19 @@ void dmc_write_control(APU_DeltaModulationChannel* dmc, u8 val) {
     dmc->timer.period = DELTA_MODULATION_RATES[val & 0x0F];
 }
 
-inline void dmc_write_output(APU_DeltaModulationChannel* dmc, u8 val) {
+static inline void dmc_write_output(APU_DeltaModulationChannel* dmc, u8 val) {
     dmc->output_level = val & 0x7F;
 }
 
-inline void dmc_write_sample_addr(APU_DeltaModulationChannel* dmc, u8 val) {
+static inline void dmc_write_sample_addr(APU_DeltaModulationChannel* dmc, u8 val) {
     dmc->sample_addr = 0xC000 | (u16)((u16)val << 6);
 }
 
-inline void dmc_write_sample_len(APU_DeltaModulationChannel* dmc, u8 val) {
+static inline void dmc_write_sample_len(APU_DeltaModulationChannel* dmc, u8 val) {
     dmc->sample_len = (u16)((u16)val << 4) | 1;
 }
 
-inline void dmc_set_memory_read_response(APU_DeltaModulationChannel* dmc, u8 val) {
+static inline void dmc_set_memory_read_response(APU_DeltaModulationChannel* dmc, u8 val) {
     dmc->shift_register = val;
     dmc->has_memory_request = false;
     if (timer_step(&dmc->timer)) {
@@ -504,11 +504,11 @@ inline void dmc_set_memory_read_response(APU_DeltaModulationChannel* dmc, u8 val
     }
 }
 
-inline bool dmc_is_active(const APU_DeltaModulationChannel* dmc) {
+static inline bool dmc_is_active(const APU_DeltaModulationChannel* dmc) {
     return dmc->bytes_remaining > 0;
 }
 
-inline void dmc_clear_interrupt_flag(APU_DeltaModulationChannel* dmc) {
+static inline void dmc_clear_interrupt_flag(APU_DeltaModulationChannel* dmc) {
     dmc->interrupt_flag = false;
 }
 
@@ -521,7 +521,7 @@ void dmc_set_enabled(APU_DeltaModulationChannel* dmc, bool enabled) {
     }
 }
 
-inline u8 dmc_output(const APU_DeltaModulationChannel* dmc) {
+static inline u8 dmc_output(const APU_DeltaModulationChannel* dmc) {
     return dmc->output_level;
 }
 
@@ -577,7 +577,7 @@ void apu_init(APU* self, usize frequency) {
     filter_init_low_pass(&self->filter3, self->sample_rate, 14000.0f);
 }
 
-inline float clamp(float d, float min, float max) {
+static inline float clamp(float d, float min, float max) {
   const float t = d < min ? min : d;
   return t > max ? max : t;
 }

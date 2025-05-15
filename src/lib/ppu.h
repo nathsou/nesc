@@ -32,6 +32,14 @@
 #define PPU_V_FINE_Y_SCROLL    0b111000000000000
 
 typedef struct {
+    u16 x;
+    u8 tile_index;
+    u8 chr[8];
+    u8 palette_index;
+    bool behind_background;
+} SpriteData;
+
+typedef struct {
     usize scanlines;
     usize dots;
     usize frame_count;
@@ -51,7 +59,6 @@ typedef struct {
     u8 x_reg; // fine X scroll
     u8 data_buffer; // internal buffer for data reads
     u8 frame[SCREEN_WIDTH * SCREEN_HEIGHT * 3]; // 3 bytes per pixel (RGB)
-    bool opaque_bg_mask[SCREEN_WIDTH * SCREEN_HEIGHT];
     bool write_toggle; // w
     u8 oam_dma;
     bool nmi_triggered;
@@ -64,6 +71,8 @@ typedef struct {
     u16 pattern_data_shift_registers[2];
     bool attribute_data_latches[2];
     u8 attribute_data_shift_registers[2];
+    SpriteData scanline_sprites[8];
+    u8 visible_scanline_sprites;
 } PPU;
 
 void ppu_init(PPU* self, Cart* cart, Mapper* mapper);
@@ -75,6 +84,5 @@ void ppu_write_register(PPU* self, u16 addr, u8 value);
 u8 ppu_read(PPU* self, u16 addr);
 void ppu_write(PPU *self, u16 addr, u8 value);
 bool ppu_step(PPU* self, usize cycles);
-void ppu_render(PPU* self);
 
 #endif

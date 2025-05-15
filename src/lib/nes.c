@@ -6,7 +6,7 @@
 #include <string.h>
 #include <stdarg.h>
 
-inline Result result_ok() {
+static inline Result result_ok() {
     return (Result){ .ok = true, .error = "\n" };
 }
 
@@ -89,7 +89,6 @@ Result nes_init(NES* nes, u8* rom_data, usize rom_size, usize audio_sample_rate)
 
     nes->cart = cart_create(ines, prg_rom, prg_rom_size, chr_rom, chr_rom_size);
     nes->mapper->init(nes->mapper, &nes->cart);
-    LOG("PRG ROM hash: %08X\n", nes->cart.hash);
 
     // initialize CPU, PPU and APU
     ppu_init(&nes->ppu, &nes->cart, nes->mapper);
@@ -132,7 +131,6 @@ void nes_step_frame(NES* nes) {
     }
 
     apu_step_frame(&nes->apu);
-    ppu_render(&nes->ppu);
 }
 
 void nes_free(NES* nes) {
