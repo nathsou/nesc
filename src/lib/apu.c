@@ -94,7 +94,7 @@ static inline u8 envelope_output(const APU_Envelope* self) {
 
 // Pulse
 
-static const float PULSE_MIXER_LOOKUP[] = {
+static const f32 PULSE_MIXER_LOOKUP[] = {
     0.0f, 0.011609139f, 0.02293948f, 0.034000948f,
     0.044803f, 0.05535466f, 0.06566453f, 0.07574082f,
     0.0855914f, 0.09522375f, 0.10464504f, 0.11386215f,
@@ -230,7 +230,7 @@ static const u8 SEQUENCER_LOOKUP[32] = {
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
 };
 
-static const float TRIANGLE_MIXER_LOOKUP[] = {
+static const f32 TRIANGLE_MIXER_LOOKUP[] = {
     0.0f, 0.006699824f, 0.01334502f, 0.019936256f, 0.02647418f, 0.032959443f, 0.039392676f, 0.0457745f,
     0.052105535f, 0.05838638f, 0.064617634f, 0.07079987f, 0.07693369f, 0.08301962f, 0.08905826f, 0.095050134f,
     0.100995794f, 0.10689577f, 0.11275058f, 0.118560754f, 0.12432679f, 0.13004918f, 0.13572845f, 0.14136505f,
@@ -527,9 +527,9 @@ static inline u8 dmc_output(const APU_DeltaModulationChannel* dmc) {
 
 // APU_Filters
 
-void filter_init_low_pass(APU_Filter* f, usize sample_rate, float cutoff) {
-    float c = (float)sample_rate / (cutoff * PI);
-    float a0 = 1.0f / (1.0f + c);
+void filter_init_low_pass(APU_Filter* f, usize sample_rate, f32 cutoff) {
+    f32 c = (f32)sample_rate / (cutoff * PI);
+    f32 a0 = 1.0f / (1.0f + c);
 
     f->b0 = a0;
     f->b1 = a0;
@@ -538,9 +538,9 @@ void filter_init_low_pass(APU_Filter* f, usize sample_rate, float cutoff) {
     f->prev_y = 0.0f;
 }
 
-void filter_init_high_pass(APU_Filter* f, usize sample_rate, float cutoff) {
-    float c = (float)sample_rate / (cutoff * PI);
-    float a0 = 1.0f / (1.0f + c);
+void filter_init_high_pass(APU_Filter* f, usize sample_rate, f32 cutoff) {
+    f32 c = (f32)sample_rate / (cutoff * PI);
+    f32 a0 = 1.0f / (1.0f + c);
 
     f->b0 = c * a0;
     f->b1 = -c * a0;
@@ -549,8 +549,8 @@ void filter_init_high_pass(APU_Filter* f, usize sample_rate, float cutoff) {
     f->prev_y = 0.0f;
 }
 
-float filter_output(APU_Filter* f, float x) {
-    float y = f->b0 * x + f->b1 * f->prev_x - f->a1 * f->prev_y;
+f32 filter_output(APU_Filter* f, f32 x) {
+    f32 y = f->b0 * x + f->b1 * f->prev_x - f->a1 * f->prev_y;
     f->prev_x = x;
     f->prev_y = y;
 
@@ -585,8 +585,8 @@ void apu_init(APU* self, usize frequency) {
     filter_init_low_pass(&self->filter3, self->sample_rate, 14000.0f);
 }
 
-static inline float clamp(float d, float min, float max) {
-  const float t = d < min ? min : d;
+static inline f32 clamp(f32 d, f32 min, f32 max) {
+  const f32 t = d < min ? min : d;
   return t > max ? max : t;
 }
 
@@ -598,9 +598,9 @@ u8 apu_get_sample(APU* self) {
     u8 n = noise_output(&self->noise);
     u8 d = dmc_output(&self->dmc);
 
-    float pulse_out = PULSE_MIXER_LOOKUP[p1 + p2];
-    float triangle_out = TRIANGLE_MIXER_LOOKUP[3 * t + 2 * n + d];
-    float sample = pulse_out + triangle_out;
+    f32 pulse_out = PULSE_MIXER_LOOKUP[p1 + p2];
+    f32 triangle_out = TRIANGLE_MIXER_LOOKUP[3 * t + 2 * n + d];
+    f32 sample = pulse_out + triangle_out;
 
     sample = filter_output(&self->filter1, sample);
     sample = filter_output(&self->filter2, sample);
@@ -827,6 +827,8 @@ void apu_step(APU* self) {
             u8 sample = apu_get_sample(self);
             self->samples_pushed++;
             self->audio_buffer[self->audio_buffer_index++] = sample;
+        } else {
+            LOG("Audio buffer overflow\n");
         }
     } else {
         self->next_sample_count = apu_get_sample_count(self);

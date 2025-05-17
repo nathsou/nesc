@@ -114,7 +114,6 @@ typedef struct {
 
 void apu_init(APU* self, usize frequency);
 void apu_write(APU* self, u16 addr, u8 value);
-void apu_step_frame(APU* self);
 void apu_step(APU* self);
 void apu_fill_buffer(APU* self, u8* cb_buffer, usize size);
 bool apu_is_asserting_irq(APU* self);

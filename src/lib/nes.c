@@ -102,6 +102,7 @@ Result nes_init_from_file(NES* nes, const char* rom_path, usize audio_sample_rat
     FILE* file = fopen(rom_path, "rb");
 
     if (file == NULL) {
+        fclose(file);
         return result_error("Failed to open ROM file '%s'", rom_path);
     }
 
