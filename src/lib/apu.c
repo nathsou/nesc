@@ -1,6 +1,6 @@
 #include "apu.h"
-#define PI 3.141592653f
 
+#define PI 3.141592653f
 #define CPU_FREQUENCY 1789773
 #define FRAME_RATE 60
 
@@ -571,6 +571,14 @@ void apu_init(APU* self, usize frequency) {
     self->audio_buffer_index = 0;
     self->frame_counter = 0;
     self->audio_buffer_size = AUDIO_BUFFER_SIZE;
+    self->cycles_per_sample = (f32)CPU_FREQUENCY / (f32)frequency;
+    self->cycle = 0;
+    self->four_step_mode = false;
+    self->irq_inhibit = false;
+    self->frame_interrupt = false;
+    self->samples_pushed = 0;
+    self->next_sample_count = 0;
+    self->prev_irq = false;
 
     filter_init_high_pass(&self->filter1, self->sample_rate, 90.0f);
     filter_init_high_pass(&self->filter2, self->sample_rate, 440.0f);
@@ -701,6 +709,13 @@ void apu_write(APU* self, u16 addr, u8 value) {
         }
         // Frame counter
         case 0x4017: {
+            self->frame_counter = 0;
+            self->four_step_mode = (value & 0b10000000) != 0;
+            self->irq_inhibit = (value & 0b01000000) != 0;
+
+            if (self->irq_inhibit) {
+                self->frame_interrupt = false;
+            }
             break;
         }
     }
@@ -734,59 +749,104 @@ void apu_step_sweep(APU* self) {
 
 const usize CYCLES_PER_FRAME = CPU_FREQUENCY / FRAME_RATE;
 
-void apu_step_quarter_frame(APU* self) {
-    static usize quarter_frame_counter = 0;
+static inline u32 apu_get_sample_count(APU* self) {
+    return (u32)((f64)self->cycle / self->cycles_per_sample);
+}
 
-    /* sequencer steps */
-    self->frame_counter = (self->frame_counter + 1) % 5;  // TODO: confirm 4‑step never used
-    if (self->frame_counter & 1) {
-        apu_step_envelope(self);
-    } else {
-        apu_step_length_counter(self);
-        apu_step_envelope(self);
-        apu_step_sweep(self);
-    }
+void apu_step(APU* self) {
+    self->cycle++;
 
-    usize cycles = CYCLES_PER_FRAME / 4;
-    usize spf_quarter = self->sample_rate / (4 * FRAME_RATE);
-    usize spf_frame = self->sample_rate / FRAME_RATE;
-    usize to_write = (quarter_frame_counter == 3)
-                      ? (spf_frame - 3 * spf_quarter)
-                      : spf_quarter;
+    triangle_step_timer(&self->triangle);
 
-    usize acc = 0;
-    for (usize i = 0; i < cycles; ++i) {
-        acc += to_write;
-        if (acc >= cycles) {
-            acc -= cycles;
-            if (self->audio_buffer_index < AUDIO_BUFFER_SIZE) {
-                self->audio_buffer[self->audio_buffer_index++] = apu_get_sample(self);
+    if (self->cycle & 1) {
+        pulse_step_timer(&self->pulse1);
+        pulse_step_timer(&self->pulse2);
+        noise_step_timer(&self->noise);
+        dmc_step_timer(&self->dmc);
+        self->frame_counter++;
+
+        bool quarter_frame = false;
+        bool half_frame = false;
+
+        switch (self->frame_counter) {
+            case 3729: {
+                quarter_frame = true;
+                break;
+            }
+            case 7457: {
+                quarter_frame = true;
+                half_frame = true;
+                break;
+            }
+            case 11186: {
+                quarter_frame = true;
+                break;
+            }
+            case 14915: {
+                if (self->four_step_mode) {
+                    quarter_frame = true;
+                    half_frame = true;
+                    self->frame_counter = 0;
+
+                    if (!self->irq_inhibit) {
+                        self->frame_interrupt = true;
+                    }
+                }
+
+                break;
+            }
+            case 18641: {
+                // this only happens in 5 step mode
+                quarter_frame = true;
+                half_frame = true;
+                self->frame_interrupt = true;
+                self->frame_counter = 0;
+                break;
             }
         }
 
-        apu_step_timer(self);
+        if (quarter_frame) {
+            pulse_step_envelope(&self->pulse1);
+            pulse_step_envelope(&self->pulse2);
+            triangle_step_linear_counter(&self->triangle);
+            noise_step_envelope(&self->noise);
+        }
+
+        if (half_frame) {
+            pulse_step_length_counter(&self->pulse1);
+            pulse_step_length_counter(&self->pulse2);
+            triangle_step_length_counter(&self->triangle);
+            noise_step_length_counter(&self->noise);
+            pulse_step_sweep(&self->pulse1);
+            pulse_step_sweep(&self->pulse2);
+        }
     }
 
-    quarter_frame_counter = (quarter_frame_counter + 1) & 3;
-}
-
-void apu_step_frame(APU* self) {
-    // step the frame sequencer 4 times per frame
-    // https://www.nesdev.org/wiki/APU_Frame_Counter
-
-    for (usize i = 0; i < 4; i++) {
-        apu_step_quarter_frame(self);
+    if (self->samples_pushed < self->next_sample_count) {
+        if (self->audio_buffer_index < AUDIO_BUFFER_SIZE) {
+            u8 sample = apu_get_sample(self);
+            self->samples_pushed++;
+            self->audio_buffer[self->audio_buffer_index++] = sample;
+        }
+    } else {
+        self->next_sample_count = apu_get_sample_count(self);
     }
 }
 
 void apu_fill_buffer(APU* self, u8* cb_buffer, usize size) {
     while (self->audio_buffer_index < size) {
-        apu_step_quarter_frame(self);
+        apu_step(self);
     }
 
-    usize len = size > self->audio_buffer_index ? self->audio_buffer_index : size;
+    memcpy(cb_buffer, self->audio_buffer, size);
+    self->audio_buffer_index -= size;
+    memcpy(self->audio_buffer, self->audio_buffer + size, self->audio_buffer_index);
+}
 
-    memcpy(cb_buffer, self->audio_buffer, len);
-    self->audio_buffer_index -= len;
-    memcpy(self->audio_buffer, self->audio_buffer + len, self->audio_buffer_index);
+bool apu_is_asserting_irq(APU *self) {
+    bool irq = self->frame_interrupt || self->dmc.interrupt_flag;
+    bool edge = irq && !self->prev_irq;
+    self->prev_irq = irq;
+
+    return edge;
 }

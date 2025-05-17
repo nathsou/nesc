@@ -125,12 +125,14 @@ void nes_step_frame(NES* nes) {
     while (true) {
         usize cpu_cycles = cpu_step(&nes->cpu);
         
+        for (usize i = 0; i < cpu_cycles; i++) {
+            apu_step(&nes->apu);
+        }
+
         if (ppu_step(&nes->ppu, cpu_cycles * 3)) {
             break;
         }
     }
-
-    apu_step_frame(&nes->apu);
 }
 
 void nes_free(NES* nes) {

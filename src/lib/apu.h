@@ -93,6 +93,14 @@ typedef struct {
 
 typedef struct {
     usize sample_rate;
+    u32 cycle;
+    f64 cycles_per_sample;
+    u8 four_step_mode;
+    u32 samples_pushed;
+    u32 next_sample_count;
+    bool irq_inhibit;
+    bool frame_interrupt;
+    bool prev_irq;
     u8 audio_buffer[AUDIO_BUFFER_SIZE];
     u16 audio_buffer_index;
     APU_Pulse pulse1, pulse2;
@@ -107,6 +115,8 @@ typedef struct {
 void apu_init(APU* self, usize frequency);
 void apu_write(APU* self, u16 addr, u8 value);
 void apu_step_frame(APU* self);
+void apu_step(APU* self);
 void apu_fill_buffer(APU* self, u8* cb_buffer, usize size);
+bool apu_is_asserting_irq(APU* self);
 
 #endif

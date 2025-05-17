@@ -1170,6 +1170,9 @@ usize cpu_step(CPU* self) {
         self->ppu->nmi_triggered = false;
         nmi(self);
         return 0;
+    } else if (!self->interrupt_disable_flag && apu_is_asserting_irq(self->apu)) {
+        irq(self);
+        return 0;
     }
 
     self->pc++;
