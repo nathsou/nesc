@@ -87,6 +87,10 @@ u8 cpu_read_byte(CPU* self, u16 addr) {
         return state;
     }
 
+    if (addr == 0x4015) {
+        return apu_read_status(self->apu);
+    }
+
     if (addr < 0x4020) {
         // APU
         return 0;
