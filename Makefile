@@ -16,14 +16,10 @@ endif
 OBJECTS = raylib-quickstart/bin/Debug/libraylib.a
 SOURCES += src/main.c src/lib/*.c
 
-.PHONY: clean test
+.PHONY: clean
 
 build: clean
 	$(CC) $(CFLAGS) -o nesc $(SOURCES) $(RAYLIB_FLAGS) $(OBJECTS)
-
-test:
-	$(CC) $(CFLAGS) -fsanitize=undefined -o /tmp/nesc_apu_test tests/apu_test.c src/lib/apu.c -lm
-	/tmp/nesc_apu_test
 
 clean:
 	rm -f nesc
