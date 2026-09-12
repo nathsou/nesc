@@ -9,6 +9,7 @@
 #define AUDIO_SAMPLE_RATE 44100
 #define AUDIO_STREAM_BUFFER_SIZE 512
 #define AUDIO_BUFFER_TARGET 2048
+#define AUDIO_BUFFER_LOW_WATER (2 * AUDIO_STREAM_BUFFER_SIZE)
 
 #define CONTROLLER_RIGHT 0b10000000
 #define CONTROLLER_LEFT 0b01000000
@@ -120,10 +121,13 @@ int main(int argc, char* argv[]) {
     while (!WindowShouldClose()) {
         handle_inputs(&nes.cpu);
 
-        // Keep the video cadence at one emulated frame per render tick.  A
-        // catch-up loop here can run several frames and only display the last
-        // one, which looks like a low frame rate even when audio is healthy.
-        if (apu_buffered_samples(&nes.apu) < AUDIO_BUFFER_TARGET) {
+        // Keep normal video pacing at one emulated frame per render tick.
+        nes_step_frame(&nes);
+
+        // A 60 Hz display consumes audio slightly faster than one NTSC NES
+        // frame produces it. Run one occasional recovery frame before the
+        // queue underruns, but never refill it with an unbounded frame burst.
+        if (apu_buffered_samples(&nes.apu) < AUDIO_BUFFER_LOW_WATER) {
             nes_step_frame(&nes);
         }
 
