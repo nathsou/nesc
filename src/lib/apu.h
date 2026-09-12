@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdatomic.h>
 #include <string.h>
 #include "types.h"
 
@@ -93,29 +94,29 @@ typedef struct {
 
 typedef struct {
     usize sample_rate;
-    u32 cycle;
-    f64 cycles_per_sample;
-    u8 four_step_mode;
-    u32 samples_pushed;
-    u32 next_sample_count;
+    u64 cycle;
+    u64 sample_phase;
+    bool five_step_mode;
     bool irq_inhibit;
     bool frame_interrupt;
-    bool prev_irq;
     u8 audio_buffer[AUDIO_BUFFER_SIZE];
-    u16 audio_buffer_index;
+    _Atomic usize audio_read_index;
+    _Atomic usize audio_write_index;
+    u8 audio_last_sample;
     APU_Pulse pulse1, pulse2;
     APU_Triangle triangle;
     APU_Noise noise;
     APU_DeltaModulationChannel dmc;
     APU_Filter filter1, filter2, filter3;
     usize frame_counter;
-    u16 audio_buffer_size;
 } APU;
 
 void apu_init(APU* self, usize frequency);
 void apu_write(APU* self, u16 addr, u8 value);
 void apu_step(APU* self);
 void apu_fill_buffer(APU* self, u8* cb_buffer, usize size);
+usize apu_buffered_samples(const APU* self);
+u8 apu_read_status(APU* self);
 bool apu_is_asserting_irq(APU* self);
 
 #endif

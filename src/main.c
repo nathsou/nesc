@@ -7,6 +7,8 @@
 #define WINDOW_WIDTH (SCREEN_WIDTH * SCALE_FACTOR)
 #define WINDOW_HEIGHT (SCREEN_HEIGHT * SCALE_FACTOR)
 #define AUDIO_SAMPLE_RATE 44100
+#define AUDIO_STREAM_BUFFER_SIZE 512
+#define AUDIO_BUFFER_TARGET 2048
 
 #define CONTROLLER_RIGHT 0b10000000
 #define CONTROLLER_LEFT 0b01000000
@@ -86,11 +88,16 @@ int main(int argc, char* argv[]) {
     SetConfigFlags(FLAG_VSYNC_HINT | FLAG_WINDOW_HIGHDPI);
     InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "nesc");
 
-    SetAudioStreamBufferSizeDefault(128);
+    SetAudioStreamBufferSizeDefault(AUDIO_STREAM_BUFFER_SIZE);
 
     InitAudioDevice();
     AudioStream stream = LoadAudioStream(AUDIO_SAMPLE_RATE, 8, 1);
     SetAudioStreamCallback(stream, audio_input_callback);
+
+    while (apu_buffered_samples(&nes.apu) < AUDIO_BUFFER_TARGET) {
+        nes_step_frame(&nes);
+    }
+
     PlayAudioStream(stream);
 
     Image image = {
@@ -112,7 +119,14 @@ int main(int argc, char* argv[]) {
 
     while (!WindowShouldClose()) {
         handle_inputs(&nes.cpu);
-        nes_step_frame(&nes);
+
+        // Keep the video cadence at one emulated frame per render tick.  A
+        // catch-up loop here can run several frames and only display the last
+        // one, which looks like a low frame rate even when audio is healthy.
+        if (apu_buffered_samples(&nes.apu) < AUDIO_BUFFER_TARGET) {
+            nes_step_frame(&nes);
+        }
+
         UpdateTexture(texture, nes.ppu.frame);
 
         BeginDrawing();

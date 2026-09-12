@@ -2,7 +2,7 @@ CC = clang
 
 CFLAGS = -g -Wall -Wextra -Wno-unused-parameter -Wno-unused-variable -Wno-unused-function -Wno-unused-value -Wconversion -Wsign-conversion -Wno-missing-braces
 CFLAGS += -I./raylib-quickstart/build/external/raylib-master/src
-CFLAGS += -O3 -std=c99
+CFLAGS += -O3 -std=c11
 CFLAGS += -ferror-limit=0
 
 # Platform-specific flags
@@ -16,10 +16,14 @@ endif
 OBJECTS = raylib-quickstart/bin/Debug/libraylib.a
 SOURCES += src/main.c src/lib/*.c
 
-.PHONY: clean
+.PHONY: clean test
 
 build: clean
 	$(CC) $(CFLAGS) -o nesc $(SOURCES) $(RAYLIB_FLAGS) $(OBJECTS)
+
+test:
+	$(CC) $(CFLAGS) -fsanitize=undefined -o /tmp/nesc_apu_test tests/apu_test.c src/lib/apu.c -lm
+	/tmp/nesc_apu_test
 
 clean:
 	rm -f nesc

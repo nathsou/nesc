@@ -256,6 +256,7 @@ static const f32 TRIANGLE_MIXER_LOOKUP[] = {
     0.6870166f, 0.6892762f, 0.69152504f, 0.6937633f, 0.6959909f, 0.69820803f, 0.7004148f, 0.7026111f,
     0.7047972f, 0.7069731f, 0.7091388f, 0.7112945f, 0.7134401f, 0.7155759f, 0.7177018f, 0.7198179f,
     0.72192425f, 0.72402096f, 0.726108f, 0.72818565f, 0.7302538f, 0.73231256f, 0.73436195f, 0.7364021f,
+    0.73843306f, 0.74045485f, 0.74246758f,
 };
 
 void triangle_init(APU_Triangle* tc) {
@@ -332,16 +333,9 @@ static const u16 NOISE_PERIOD_TABLE[16] = {
 
 void noise_init(APU_Noise* self) {
     self->enabled = false;
-    self->length_counter.counter = 0;
-    self->envelope.constant_mode = false;
-    self->envelope.looping = false;
-    self->envelope.start = false;
-    self->envelope.constant_volume = 0;
-    self->envelope.period = 0;
-    self->envelope.divider = 0;
-    self->envelope.decay = 0;
-    self->timer.counter = 0;
-    self->timer.period = 0;
+    length_counter_init(&self->length_counter);
+    envelope_init(&self->envelope);
+    timer_init(&self->timer);
     self->shift_register = 1;
     self->mode = false;
 }
@@ -365,9 +359,7 @@ void noise_step_timer(APU_Noise* self) {
 }
 
 void noise_step_length_counter(APU_Noise* self) {
-    if (self->length_counter.counter > 0) {
-        self->length_counter.counter--;
-    }
+    length_counter_step(&self->length_counter);
 }
 
 void noise_step_envelope(APU_Noise* self) {
@@ -376,7 +368,7 @@ void noise_step_envelope(APU_Noise* self) {
 
 void noise_write_control(APU_Noise* self, u8 val) {
     bool halt_length_counter = (val & 0x20) != 0;
-    self->length_counter.counter = halt_length_counter ? 0 : self->length_counter.counter;
+    length_counter_set_enabled(&self->length_counter, !halt_length_counter);
     self->envelope.looping = halt_length_counter;
     self->envelope.constant_mode = (val & 0x10) != 0;
     self->envelope.period = val & 0x0F;
@@ -389,12 +381,12 @@ void noise_write_period(APU_Noise* self, u8 val) {
 }
 
 void noise_write_length(APU_Noise* self, u8 val) {
-    self->length_counter.counter = val >> 3;
+    length_counter_set(&self->length_counter, val >> 3);
     self->envelope.start = true;
 }
 
 u8 noise_output(const APU_Noise* self) {
-    if ((self->shift_register & 1) == 1 || self->length_counter.counter == 0) {
+    if (!self->enabled || (self->shift_register & 1) == 1 || length_counter_is_zero(&self->length_counter)) {
         return 0;
     } else {
         return envelope_output(&self->envelope);
@@ -568,17 +560,15 @@ void apu_init(APU* self, usize frequency) {
     dmc_init(&self->dmc);
 
     self->sample_rate = frequency;
-    self->audio_buffer_index = 0;
+    atomic_init(&self->audio_read_index, 0);
+    atomic_init(&self->audio_write_index, 0);
+    self->audio_last_sample = 128;
     self->frame_counter = 0;
-    self->audio_buffer_size = AUDIO_BUFFER_SIZE;
-    self->cycles_per_sample = (f32)CPU_FREQUENCY / (f32)frequency;
+    self->sample_phase = 0;
     self->cycle = 0;
-    self->four_step_mode = false;
+    self->five_step_mode = false;
     self->irq_inhibit = false;
     self->frame_interrupt = false;
-    self->samples_pushed = 0;
-    self->next_sample_count = 0;
-    self->prev_irq = false;
 
     filter_init_high_pass(&self->filter1, self->sample_rate, 90.0f);
     filter_init_high_pass(&self->filter2, self->sample_rate, 440.0f);
@@ -710,7 +700,7 @@ void apu_write(APU* self, u16 addr, u8 value) {
         // Frame counter
         case 0x4017: {
             self->frame_counter = 0;
-            self->four_step_mode = (value & 0b10000000) != 0;
+            self->five_step_mode = (value & 0b10000000) != 0;
             self->irq_inhibit = (value & 0b01000000) != 0;
 
             if (self->irq_inhibit) {
@@ -749,8 +739,17 @@ void apu_step_sweep(APU* self) {
 
 const usize CYCLES_PER_FRAME = CPU_FREQUENCY / FRAME_RATE;
 
-static inline u32 apu_get_sample_count(APU* self) {
-    return (u32)((f64)self->cycle / self->cycles_per_sample);
+static inline void apu_queue_sample(APU* self, u8 sample) {
+    usize write_index = atomic_load_explicit(&self->audio_write_index, memory_order_relaxed);
+    usize next_write_index = (write_index + 1) % AUDIO_BUFFER_SIZE;
+    usize read_index = atomic_load_explicit(&self->audio_read_index, memory_order_acquire);
+
+    if (next_write_index == read_index) {
+        return;
+    }
+
+    self->audio_buffer[write_index] = sample;
+    atomic_store_explicit(&self->audio_write_index, next_write_index, memory_order_release);
 }
 
 void apu_step(APU* self) {
@@ -783,7 +782,7 @@ void apu_step(APU* self) {
                 break;
             }
             case 14915: {
-                if (self->four_step_mode) {
+                if (!self->five_step_mode) {
                     quarter_frame = true;
                     half_frame = true;
                     self->frame_counter = 0;
@@ -796,11 +795,11 @@ void apu_step(APU* self) {
                 break;
             }
             case 18641: {
-                // this only happens in 5 step mode
-                quarter_frame = true;
-                half_frame = true;
-                self->frame_interrupt = true;
-                self->frame_counter = 0;
+                if (self->five_step_mode) {
+                    quarter_frame = true;
+                    half_frame = true;
+                    self->frame_counter = 0;
+                }
                 break;
             }
         }
@@ -822,33 +821,47 @@ void apu_step(APU* self) {
         }
     }
 
-    if (self->samples_pushed < self->next_sample_count) {
-        if (self->audio_buffer_index < AUDIO_BUFFER_SIZE) {
-            u8 sample = apu_get_sample(self);
-            self->samples_pushed++;
-            self->audio_buffer[self->audio_buffer_index++] = sample;
-        } else {
-            LOG("Audio buffer overflow\n");
-        }
-    } else {
-        self->next_sample_count = apu_get_sample_count(self);
+    self->sample_phase += self->sample_rate;
+    if (self->sample_phase >= CPU_FREQUENCY) {
+        self->sample_phase -= CPU_FREQUENCY;
+        apu_queue_sample(self, apu_get_sample(self));
     }
 }
 
 void apu_fill_buffer(APU* self, u8* cb_buffer, usize size) {
-    while (self->audio_buffer_index < size) {
-        apu_step(self);
+    usize read_index = atomic_load_explicit(&self->audio_read_index, memory_order_relaxed);
+    usize write_index = atomic_load_explicit(&self->audio_write_index, memory_order_acquire);
+    usize copied = 0;
+
+    while (copied < size && read_index != write_index) {
+        self->audio_last_sample = self->audio_buffer[read_index];
+        cb_buffer[copied++] = self->audio_last_sample;
+        read_index = (read_index + 1) % AUDIO_BUFFER_SIZE;
     }
 
-    memcpy(cb_buffer, self->audio_buffer, size);
-    self->audio_buffer_index -= size;
-    memcpy(self->audio_buffer, self->audio_buffer + size, self->audio_buffer_index);
+    atomic_store_explicit(&self->audio_read_index, read_index, memory_order_release);
+    memset(cb_buffer + copied, self->audio_last_sample, size - copied);
+}
+
+usize apu_buffered_samples(const APU* self) {
+    usize read_index = atomic_load_explicit(&self->audio_read_index, memory_order_acquire);
+    usize write_index = atomic_load_explicit(&self->audio_write_index, memory_order_acquire);
+    return (write_index + AUDIO_BUFFER_SIZE - read_index) % AUDIO_BUFFER_SIZE;
+}
+
+u8 apu_read_status(APU* self) {
+    u8 status = 0;
+    if (!length_counter_is_zero(&self->pulse1.length_counter)) status |= 0x01;
+    if (!length_counter_is_zero(&self->pulse2.length_counter)) status |= 0x02;
+    if (!length_counter_is_zero(&self->triangle.length_counter)) status |= 0x04;
+    if (!length_counter_is_zero(&self->noise.length_counter)) status |= 0x08;
+    if (dmc_is_active(&self->dmc)) status |= 0x10;
+    if (self->frame_interrupt) status |= 0x40;
+    if (self->dmc.interrupt_flag) status |= 0x80;
+    self->frame_interrupt = false;
+    return status;
 }
 
 bool apu_is_asserting_irq(APU *self) {
-    bool irq = self->frame_interrupt || self->dmc.interrupt_flag;
-    bool edge = irq && !self->prev_irq;
-    self->prev_irq = irq;
-
-    return edge;
+    return self->frame_interrupt || self->dmc.interrupt_flag;
 }
