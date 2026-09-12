@@ -65,7 +65,7 @@ void handle_inputs(CPU* cpu) {
 APU* apu_instance = NULL;
 
 void audio_input_callback(void* output_buffer, unsigned int frames) {
-    u8 *samples = (u8*)output_buffer;
+    f32 *samples = (f32*)output_buffer;
     apu_fill_buffer(apu_instance, samples, (usize)frames);
 }
 
@@ -92,7 +92,7 @@ int main(int argc, char* argv[]) {
     SetAudioStreamBufferSizeDefault(AUDIO_STREAM_BUFFER_SIZE);
 
     InitAudioDevice();
-    AudioStream stream = LoadAudioStream(AUDIO_SAMPLE_RATE, 8, 1);
+    AudioStream stream = LoadAudioStream(AUDIO_SAMPLE_RATE, 32, 1);
     SetAudioStreamCallback(stream, audio_input_callback);
 
     while (apu_buffered_samples(&nes.apu) < AUDIO_BUFFER_TARGET) {
@@ -117,6 +117,8 @@ int main(int argc, char* argv[]) {
 
     Rectangle source = { 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT };
     Rectangle dest = { 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT };
+    usize audio_underrun_samples = 0;
+    usize audio_diagnostic_frames = 0;
 
     while (!WindowShouldClose()) {
         handle_inputs(&nes.cpu);
@@ -137,6 +139,16 @@ int main(int argc, char* argv[]) {
             ClearBackground(WHITE);
             DrawTexturePro(texture, source, dest, (Vector2){ 0, 0 }, 0.0f, WHITE);
         EndDrawing();
+
+        audio_underrun_samples += apu_take_underrun_samples(&nes.apu);
+        audio_diagnostic_frames++;
+        if (audio_diagnostic_frames == 60) {
+            if (audio_underrun_samples > 0) {
+                fprintf(stderr, "Audio underrun: %zu samples in the last 60 frames\n", audio_underrun_samples);
+            }
+            audio_underrun_samples = 0;
+            audio_diagnostic_frames = 0;
+        }
     }
 
     StopAudioStream(stream);

@@ -99,10 +99,11 @@ typedef struct {
     bool five_step_mode;
     bool irq_inhibit;
     bool frame_interrupt;
-    u8 audio_buffer[AUDIO_BUFFER_SIZE];
+    f32 audio_buffer[AUDIO_BUFFER_SIZE];
     _Atomic usize audio_read_index;
     _Atomic usize audio_write_index;
-    u8 audio_last_sample;
+    f32 audio_last_sample;
+    _Atomic usize audio_underrun_samples;
     APU_Pulse pulse1, pulse2;
     APU_Triangle triangle;
     APU_Noise noise;
@@ -114,8 +115,9 @@ typedef struct {
 void apu_init(APU* self, usize frequency);
 void apu_write(APU* self, u16 addr, u8 value);
 void apu_step(APU* self);
-void apu_fill_buffer(APU* self, u8* cb_buffer, usize size);
+void apu_fill_buffer(APU* self, f32* cb_buffer, usize size);
 usize apu_buffered_samples(const APU* self);
+usize apu_take_underrun_samples(APU* self);
 u8 apu_read_status(APU* self);
 bool apu_is_asserting_irq(APU* self);
 

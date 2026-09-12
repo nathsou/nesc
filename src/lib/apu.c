@@ -303,7 +303,7 @@ static inline void triangle_step_length_counter(APU_Triangle* tc) {
 }
 
 void triangle_step_timer(APU_Triangle* tc) {
-    if (timer_step(&tc->timer) && tc->linear_counter > 0 && !length_counter_is_zero(&tc->length_counter)) {
+    if (tc->timer.period > 1 && timer_step(&tc->timer) && tc->linear_counter > 0 && !length_counter_is_zero(&tc->length_counter)) {
         tc->duty_cycle = (tc->duty_cycle + 1) & 31;
     }
 }
@@ -316,12 +316,8 @@ void triangle_set_enabled(APU_Triangle* tc, bool enabled) {
 }
 
 u8 triangle_output(const APU_Triangle* tc) {
-    if (!tc->enabled ||
-        length_counter_is_zero(&tc->length_counter) ||
-        tc->linear_counter == 0 ||
-        tc->timer.period <= 2) {
-        return 0;
-    }
+    // Silencing the triangle only stops its sequencer. The DAC continues to
+    // output the current step; forcing it to zero creates a loud pop.
     return SEQUENCER_LOOKUP[tc->duty_cycle & 0x1F];
 }
 
@@ -562,7 +558,8 @@ void apu_init(APU* self, usize frequency) {
     self->sample_rate = frequency;
     atomic_init(&self->audio_read_index, 0);
     atomic_init(&self->audio_write_index, 0);
-    self->audio_last_sample = 128;
+    self->audio_last_sample = 0.0f;
+    atomic_init(&self->audio_underrun_samples, 0);
     self->frame_counter = 0;
     self->sample_phase = 0;
     self->cycle = 0;
@@ -580,7 +577,7 @@ static inline f32 clamp(f32 d, f32 min, f32 max) {
   return t > max ? max : t;
 }
 
-u8 apu_get_sample(APU* self) {
+f32 apu_get_sample(APU* self) {
     // https://www.nesdev.org/wiki/APU_Mixer
     u8 p1 = pulse_output(&self->pulse1);
     u8 p2 = pulse_output(&self->pulse2);
@@ -596,11 +593,14 @@ u8 apu_get_sample(APU* self) {
     sample = filter_output(&self->filter2, sample);
     sample = filter_output(&self->filter3, sample);
 
-    // normalize to [0, 1] (constants found by running the game and measuring the output)
-    sample = clamp((sample + 0.325022f) * 1.5792998016399449f, 0.0f, 1.0f);
-
-    return (u8)(255.0f * sample);
+    // Raylib's 32-bit stream expects signed samples in [-1, 1]. Keeping the
+    // filtered signal centered at zero avoids 8-bit quantization and DC bias.
+    return clamp(sample * 3.0f, -1.0f, 1.0f);
 }
+
+void apu_step_envelope(APU* self);
+void apu_step_length_counter(APU* self);
+void apu_step_sweep(APU* self);
 
 void apu_write(APU* self, u16 addr, u8 value) {
     switch (addr) {
@@ -706,6 +706,16 @@ void apu_write(APU* self, u16 addr, u8 value) {
             if (self->irq_inhibit) {
                 self->frame_interrupt = false;
             }
+
+            // A five-step write clocks both frame units at the start of the
+            // sequence. The hardware delays this by a few CPU cycles, which is
+            // not audibly significant at the current instruction granularity.
+            if (self->five_step_mode) {
+                apu_step_envelope(self);
+                noise_step_envelope(&self->noise);
+                apu_step_length_counter(self);
+                apu_step_sweep(self);
+            }
             break;
         }
     }
@@ -739,7 +749,7 @@ void apu_step_sweep(APU* self) {
 
 const usize CYCLES_PER_FRAME = CPU_FREQUENCY / FRAME_RATE;
 
-static inline void apu_queue_sample(APU* self, u8 sample) {
+static inline void apu_queue_sample(APU* self, f32 sample) {
     usize write_index = atomic_load_explicit(&self->audio_write_index, memory_order_relaxed);
     usize next_write_index = (write_index + 1) % AUDIO_BUFFER_SIZE;
     usize read_index = atomic_load_explicit(&self->audio_read_index, memory_order_acquire);
@@ -828,7 +838,7 @@ void apu_step(APU* self) {
     }
 }
 
-void apu_fill_buffer(APU* self, u8* cb_buffer, usize size) {
+void apu_fill_buffer(APU* self, f32* cb_buffer, usize size) {
     usize read_index = atomic_load_explicit(&self->audio_read_index, memory_order_relaxed);
     usize write_index = atomic_load_explicit(&self->audio_write_index, memory_order_acquire);
     usize copied = 0;
@@ -840,13 +850,20 @@ void apu_fill_buffer(APU* self, u8* cb_buffer, usize size) {
     }
 
     atomic_store_explicit(&self->audio_read_index, read_index, memory_order_release);
-    memset(cb_buffer + copied, self->audio_last_sample, size - copied);
+    while (copied < size) {
+        cb_buffer[copied++] = self->audio_last_sample;
+        atomic_fetch_add_explicit(&self->audio_underrun_samples, 1, memory_order_relaxed);
+    }
 }
 
 usize apu_buffered_samples(const APU* self) {
     usize read_index = atomic_load_explicit(&self->audio_read_index, memory_order_acquire);
     usize write_index = atomic_load_explicit(&self->audio_write_index, memory_order_acquire);
     return (write_index + AUDIO_BUFFER_SIZE - read_index) % AUDIO_BUFFER_SIZE;
+}
+
+usize apu_take_underrun_samples(APU* self) {
+    return atomic_exchange_explicit(&self->audio_underrun_samples, 0, memory_order_relaxed);
 }
 
 u8 apu_read_status(APU* self) {
