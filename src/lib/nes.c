@@ -1,6 +1,8 @@
 #include "nes.h"
 #include "nrom.h"
 #include "mmc1.h"
+#include "uxrom.h"
+#include "mmc3.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -31,6 +33,16 @@ Mapper *get_mapper(INES ines) {
             Mapper_MMC1* mmc1 = (Mapper_MMC1*)malloc(sizeof(Mapper_MMC1));
             mapper_mmc1_init(mmc1);
             return (Mapper*)mmc1;
+        }
+        case 2: {
+            Mapper_UXROM* uxrom = (Mapper_UXROM*)malloc(sizeof(Mapper_UXROM));
+            mapper_uxrom_init(uxrom);
+            return (Mapper*)uxrom;
+        }
+        case 4: {
+            Mapper_MMC3* mmc3 = (Mapper_MMC3*)malloc(sizeof(Mapper_MMC3));
+            mapper_mmc3_init(mmc3);
+            return (Mapper*)mmc3;
         }
     }
 

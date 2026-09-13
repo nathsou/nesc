@@ -43,9 +43,10 @@ typedef struct {
     usize scanlines;
     usize dots;
     usize frame_count;
+    usize total_cycles;
     Cart* cart;
     Mapper* mapper;
-    u8 nametable[2048]; // 2KB of nametable RAM
+    u8 nametable[4096]; // four-screen cartridges require 4KB
     u8 palette_table[32]; // 32 bytes of palette RAM
     u8 oam[256]; // 256 bytes of OAM RAM
     u8 ctrl_reg;

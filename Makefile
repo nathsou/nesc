@@ -15,11 +15,19 @@ endif
 
 OBJECTS = raylib-quickstart/bin/Debug/libraylib.a
 SOURCES += src/main.c src/lib/*.c
+TEST_SOURCES = tests/mappers_test.c src/lib/cart.c src/lib/uxrom.c src/lib/mmc3.c src/lib/ppu.c
 
-.PHONY: clean
+.PHONY: clean test rom-test
 
 build: clean
 	$(CC) $(CFLAGS) -o nesc $(SOURCES) $(RAYLIB_FLAGS) $(OBJECTS)
+
+test:
+	$(CC) $(CFLAGS) -Isrc/lib -o mapper-tests $(TEST_SOURCES)
+	./mapper-tests
+
+rom-test:
+	$(CC) $(CFLAGS) -Isrc/lib -o rom-test tests/rom_runner.c src/lib/*.c -lm -lpthread
 
 clean:
 	rm -f nesc

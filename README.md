@@ -23,3 +23,5 @@ In the root folder:
 ## Mappers
 - [x] NROM
 - [x] MMC1
+- [x] UxROM
+- [x] MMC3
