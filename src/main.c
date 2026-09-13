@@ -30,34 +30,17 @@
 #define CONTROLLER1_SELECT_KEY KEY_SPACE
 
 void handle_inputs(CPU* cpu) {
-    bool up = false;
-    bool down = false;
-    bool left = false;
-    bool right = false;
-    bool a = false;
-    bool b = false;
-    bool start = false;
-    bool select = false;
-    
-    // Keyboard inputs
-    if (IsKeyDown(CONTROLLER1_UP_KEY)) up = true;
-    if (IsKeyDown(CONTROLLER1_LEFT_KEY)) left = true;
-    if (IsKeyDown(CONTROLLER1_DOWN_KEY)) down = true;
-    if (IsKeyDown(CONTROLLER1_RIGHT_KEY)) right = true;
-    if (IsKeyDown(CONTROLLER1_A_KEY)) a = true;
-    if (IsKeyDown(CONTROLLER1_B_KEY)) b = true;
-    if (IsKeyDown(CONTROLLER1_START_KEY)) start = true;
-    if (IsKeyDown(CONTROLLER1_SELECT_KEY)) select = true;
-
     u8 state = 0;
-    if (up) state |= CONTROLLER_UP;
-    if (down) state |= CONTROLLER_DOWN;
-    if (left) state |= CONTROLLER_LEFT;
-    if (right) state |= CONTROLLER_RIGHT;
-    if (a) state |= CONTROLLER_A;
-    if (b) state |= CONTROLLER_B;
-    if (start) state |= CONTROLLER_START;
-    if (select) state |= CONTROLLER_SELECT;
+
+    // Keyboard inputs
+    if (IsKeyDown(CONTROLLER1_UP_KEY)) state |= CONTROLLER_UP;
+    if (IsKeyDown(CONTROLLER1_LEFT_KEY)) state |= CONTROLLER_LEFT;
+    if (IsKeyDown(CONTROLLER1_DOWN_KEY)) state |= CONTROLLER_DOWN;
+    if (IsKeyDown(CONTROLLER1_RIGHT_KEY)) state |= CONTROLLER_RIGHT;
+    if (IsKeyDown(CONTROLLER1_A_KEY)) state |= CONTROLLER_A;
+    if (IsKeyDown(CONTROLLER1_B_KEY)) state |= CONTROLLER_B;
+    if (IsKeyDown(CONTROLLER1_START_KEY)) state |= CONTROLLER_START;
+    if (IsKeyDown(CONTROLLER1_SELECT_KEY)) state |= CONTROLLER_SELECT;
 
     cpu_update_controller1(cpu, state);
 }
