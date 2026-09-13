@@ -1065,7 +1065,10 @@ void nmi(CPU* self) {
 }
 
 void irq(CPU* self) {
-    brk(self);
+    cpu_push_word(self, self->pc);
+    cpu_push(self, cpu_get_flags(self) & (u8)~0x10);
+    sei(self);
+    self->pc = cpu_read_word(self, CPU_IRQ_VECTOR);
     self->inst_cycles += 7;
 }
 
@@ -1173,12 +1176,18 @@ usize cpu_step(CPU* self) {
     if (self->ppu->nmi_triggered) {
         self->ppu->nmi_triggered = false;
         nmi(self);
-        return 0;
-    } else if (!self->interrupt_disable_flag && apu_is_asserting_irq(self->apu)) {
+    } else if (!self->interrupt_disable_flag && (apu_is_asserting_irq(self->apu) || mapper_is_asserting_irq(self->mapper))) {
         irq(self);
-        return 0;
+    } else {
+        goto execute_instruction;
     }
 
+    usize interrupt_cycles = self->inst_cycles;
+    self->total_cycles += interrupt_cycles;
+    self->inst_cycles = 0;
+    return interrupt_cycles;
+
+execute_instruction:
     self->pc++;
 
     switch (opcode) {

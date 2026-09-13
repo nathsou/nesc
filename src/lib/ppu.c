@@ -6,6 +6,8 @@
 #define TILES_PER_ROW 32
 #define TILES_PER_COLUMN 30
 
+static inline void ppu_notify_bus_address(PPU* self, u16 addr);
+
 // 64 RGB colors
 const u8 COLOR_PALETTE[] = {
    0x80, 0x80, 0x80, 0x00, 0x3D, 0xA6, 0x00, 0x12, 0xB0, 0x44, 0x00, 0x96, 0xA1, 0x00, 0x5E,
@@ -31,6 +33,7 @@ void ppu_reset(PPU* self) {
     self->dots = 340;
     self->scanlines = 240;
     self->frame_count = 0;
+    self->total_cycles = 0;
     ppu_write_register(self, 0x2000, 0);
     ppu_write_register(self, 0x2001, 0);
 }
@@ -39,6 +42,7 @@ void ppu_init(PPU* self, Cart *cart, Mapper* mapper) {
     self->scanlines = 0;
     self->dots = 0;
     self->frame_count = 0;
+    self->total_cycles = 0;
     self->cart = cart;
     self->mapper = mapper;
     memset(self->nametable, 0, sizeof(self->nametable));
@@ -106,6 +110,7 @@ u8 ppu_read_register(PPU* self, u16 addr) {
             u8 value = self->data_buffer;
             self->data_buffer = ppu_read(self, self->v_reg);
             ppu_increment_vram_addr(self);
+            ppu_notify_bus_address(self, self->v_reg);
             return value;
         }
         default: return 0;
@@ -161,6 +166,7 @@ void ppu_write_register(PPU* self, u16 addr, u8 value) {
                 // v: <...all bits...> <- t: <...all bits...>
                 self->t_reg = (self->t_reg & 0xFF00) | ((u16)value);
                 self->v_reg = self->t_reg;
+                ppu_notify_bus_address(self, self->v_reg);
             }
 
             self->write_toggle = !self->write_toggle;
@@ -169,6 +175,7 @@ void ppu_write_register(PPU* self, u16 addr, u8 value) {
         case 0x2007: {
             ppu_write(self, self->v_reg, value);
             ppu_increment_vram_addr(self);
+            ppu_notify_bus_address(self, self->v_reg);
             break;
         }
     }
@@ -230,11 +237,17 @@ u16 ppu_nametable_mirrored_addr(PPU* self, u16 addr) {
     return 0;
 }
 
+static inline void ppu_notify_bus_address(PPU* self, u16 addr) {
+    mapper_ppu_address(self->mapper, addr & 0x3fff, self->total_cycles);
+}
+
 static inline u8 ppu_read_chr_rom(PPU* self, u16 addr) {
+    ppu_notify_bus_address(self, addr);
     return self->mapper->read(self->mapper, addr);
 }
 
 static inline void ppu_write_chr_rom(PPU* self, u16 addr, u8 value) {
+    ppu_notify_bus_address(self, addr);
     self->mapper->write(self->mapper, addr, value);
 }
 
@@ -243,6 +256,8 @@ u8 ppu_read(PPU* self, u16 addr) {
     if (addr < 0x2000) {
         return ppu_read_chr_rom(self, addr);
     }
+
+    ppu_notify_bus_address(self, addr);
 
     if (addr < 0x3f00) {
         return self->nametable[ppu_nametable_mirrored_addr(self, addr)];
@@ -263,10 +278,13 @@ void ppu_write(PPU* self, u16 addr, u8 value) {
     if (addr < 0x2000) {
         ppu_write_chr_rom(self, addr, value);
     } else if (addr >= 0x2000 && addr < 0x3f00) {
+        ppu_notify_bus_address(self, addr);
         self->nametable[ppu_nametable_mirrored_addr(self, addr)] = value;
     } else if (addr == 0x3f10 || addr == 0x3f14 || addr == 0x3f18 || addr == 0x3f1c) {
+        ppu_notify_bus_address(self, addr);
         self->palette_table[(addr - 0x3f10) & 31] = value;
     } else if (addr < 0x4000) {
+        ppu_notify_bus_address(self, addr);
         self->palette_table[(addr - 0x3f00) & 31] = value;
     }
 }
@@ -334,12 +352,14 @@ void ppu_fetch_nametable_byte(PPU* self) {
     // Tile and attribute fetching
     // https://www.nesdev.org/wiki/PPU_scrolling
     u16 tile_addr = 0x2000 | (self->v_reg & 0x0FFF);
+    ppu_notify_bus_address(self, tile_addr);
     u16 mirrored_addr = ppu_nametable_mirrored_addr(self, tile_addr);
     self->nametable_byte = self->nametable[mirrored_addr];
 }
 
 void ppu_fetch_attribute_byte(PPU* self) {
     u16 attribute_addr = 0x23C0 | (self->v_reg & 0x0C00) | ((self->v_reg >> 4) & 0x38) | ((self->v_reg >> 2) & 0x07);
+    ppu_notify_bus_address(self, attribute_addr);
     u16 mirrored_addr = ppu_nametable_mirrored_addr(self, attribute_addr);
     usize shift = ((self->v_reg >> 4) & 4) | (self->v_reg & 2);
     self->attribute_byte = (self->nametable[mirrored_addr] >> shift) & 0b11;
@@ -533,6 +553,8 @@ void ppu_fetch_next_scanline_sprites(PPU* self) {
 }
 
 void ppu_tick(PPU* self) {
+    self->total_cycles++;
+    mapper_ppu_tick(self->mapper);
     if (self->should_trigger_nmi && (self->ctrl_reg & PPU_CTRL_NMI_ENABLE) && (self->status_reg & PPU_STATUS_VBLANK)) {
         self->should_trigger_nmi = false;
         self->nmi_triggered = true;
@@ -638,6 +660,13 @@ bool ppu_step(PPU* self, usize cycles) {
                 // clear secondary OAM
                 self->visible_scanline_sprites = 0;
             }
+        }
+
+        // Sprite fetch slots occur even when no sprite is visible. This
+        // preserves the A12 transition MMC3 normally observes per scanline.
+        if (rendering_enabled && render_line && self->dots == 260) {
+            u16 sprite_pattern_table = self->ctrl_reg & PPU_CTRL_SPRITE_PATTERN_TABLE ? 0x1000 : 0;
+            ppu_notify_bus_address(self, sprite_pattern_table);
         }
 
         if (self->dots == 1) {
