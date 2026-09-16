@@ -10,6 +10,7 @@ struct mapper {
     void (*init)(Mapper* self, Cart* cart);
     void (*reset)(Mapper* self);
     void (*write)(Mapper* self, u16 addr, u8 value);
+    void (*write_rmw)(Mapper* self, u16 addr, u8 old_value, u8 new_value);
     u8 (*read)(Mapper* self, u16 addr);
     void (*ppu_address)(Mapper* self, u16 addr, usize ppu_cycle);
     void (*ppu_tick)(Mapper* self);

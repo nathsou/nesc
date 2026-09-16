@@ -33,7 +33,10 @@ const char* INST_OPCODES[] = {
     "BEQ", "SBC", "ILL", "ILL", "ILL", "SBC", "INC", "ILL", "SED", "SBC", "ILL", "ILL", "ILL", "SBC", "INC", "ILL"
 };
 
+#define UNSTABLE_MAGIC 0xee
+
 void cpu_set_flags(CPU* self, u8 flags);
+bool page_boundary_crossed(u16 prev, u16 next);
 
 void cpu_init(CPU* self, PPU* ppu, APU* apu, Mapper* mapper) {
     self->ppu = ppu;
@@ -58,6 +61,8 @@ void cpu_init(CPU* self, PPU* ppu, APU* apu, Mapper* mapper) {
     self->inst_cycles = 0;
     self->total_cycles = 0;
     self->stall_cycles = 0;
+    self->irq_disable_for_poll = true;
+    self->halted = false;
 
     memset(self->ram, 0, sizeof(self->ram));
 }
@@ -143,6 +148,15 @@ void cpu_write_word(CPU* self, u16 addr, u16 value) {
     cpu_write_byte(self, addr + 1, value >> 8);
 }
 
+void cpu_write_rmw(CPU* self, u16 addr, u8 old_value, u8 new_value) {
+    if (addr >= 0x4020 && self->mapper->write_rmw != NULL) {
+        self->mapper->write_rmw(self->mapper, addr, old_value, new_value);
+        return;
+    }
+    cpu_write_byte(self, addr, old_value);
+    cpu_write_byte(self, addr, new_value);
+}
+
 // addressing mode utils
 
 void cpu_update_nz(CPU* self, u8 value) {
@@ -179,11 +193,15 @@ u16 absolute_x_addr(CPU* self, u16 addr) {
 }
 
 u8 absolute_x(CPU* self, u16 addr) {
-    return cpu_read_byte(self, absolute_x_addr(self, addr));
+    u16 effective_addr = absolute_x_addr(self, addr);
+    self->inst_cycles += page_boundary_crossed(addr, effective_addr);
+    return cpu_read_byte(self, effective_addr);
 }
 
 u8 absolute_y(CPU* self, u16 addr) {
-    return cpu_read_byte(self, addr + self->y);
+    u16 effective_addr = addr + self->y;
+    self->inst_cycles += page_boundary_crossed(addr, effective_addr);
+    return cpu_read_byte(self, effective_addr);
 }
 
 u16 indirect_x_addr(CPU* self, u8 addr) {
@@ -207,7 +225,11 @@ u8 indirect_x_val(CPU* self, u8 addr) {
 }
 
 u8 indirect_y_val(CPU* self, u8 addr) {
-    return cpu_read_byte(self, indirect_y_addr(self, addr));
+    u8 addr2 = addr + 1;
+    u16 base_addr = (u16)((u16)cpu_read_byte(self, addr) | ((u16)cpu_read_byte(self, addr2) << 8));
+    u16 effective_addr = base_addr + self->y;
+    self->inst_cycles += page_boundary_crossed(base_addr, effective_addr);
+    return cpu_read_byte(self, effective_addr);
 }
 
 void cpu_push(CPU* self, u8 value) {
@@ -666,9 +688,10 @@ void asl_acc(CPU* self) {
 
 void asl_abs(CPU* self, u16 addr) {
     u8 val = cpu_read_byte(self, addr);
+    u8 old_value = val;
     self->carry_flag = val & 0x80;
     val <<= 1;
-    cpu_write_byte(self, addr, val);
+    cpu_write_rmw(self, addr, old_value, val);
     cpu_update_nz(self, val);
 }
 
@@ -694,9 +717,10 @@ void lsr_acc(CPU* self) {
 
 void _lsr(CPU* self, u16 addr) {
     u8 val = cpu_read_byte(self, addr);
+    u8 old_value = val;
     self->carry_flag = val & 1;
     val >>= 1;
-    cpu_write_byte(self, addr, val);
+    cpu_write_rmw(self, addr, old_value, val);
     cpu_update_nz(self, val);
 }
 
@@ -720,8 +744,9 @@ void lsr_absx(CPU* self, u16 addr) {
 
 void _inc(CPU* self, u16 addr) {
     u8 val = cpu_read_byte(self, addr);
+    u8 old_value = val;
     val++;
-    cpu_write_byte(self, addr, val);
+    cpu_write_rmw(self, addr, old_value, val);
     cpu_update_nz(self, val);
 }
 
@@ -759,8 +784,9 @@ void iny(CPU* self) {
 
 void _dec(CPU* self, u16 addr) {
     u8 val = cpu_read_byte(self, addr);
+    u8 old_value = val;
     val--;
-    cpu_write_byte(self, addr, val);
+    cpu_write_rmw(self, addr, old_value, val);
     cpu_update_nz(self, val);
 }
 
@@ -941,11 +967,12 @@ void bit_abs(CPU* self, u16 addr) {
 
 void _rol(CPU* self, u16 addr) {
     u8 val = cpu_read_byte(self, addr);
+    u8 old_value = val;
     bool next_carry_flag = val & 0x80;
     val <<= 1;
     val |= self->carry_flag;
     self->carry_flag = next_carry_flag;
-    cpu_write_byte(self, addr, val);
+    cpu_write_rmw(self, addr, old_value, val);
     cpu_update_nz(self, val);
 }
 
@@ -977,6 +1004,7 @@ void rol_absx(CPU* self, u16 addr) {
 
 void _ror(CPU* self, u16 addr) {
     u8 val = cpu_read_byte(self, addr);
+    u8 old_value = val;
     bool old_carry = self->carry_flag;
     self->carry_flag = val & 1;
     val >>= 1;
@@ -985,7 +1013,7 @@ void _ror(CPU* self, u16 addr) {
         val |= 0x80;
     }
 
-    cpu_write_byte(self, addr, val);
+    cpu_write_rmw(self, addr, old_value, val);
     cpu_update_nz(self, val);
 }
 
@@ -1050,6 +1078,7 @@ void rti(CPU* self) {
 // interrupts
 
 void brk(CPU* self) {
+    self->pc++;
     cpu_push_word(self, self->pc);
     php(self);
     sei(self);
@@ -1058,8 +1087,9 @@ void brk(CPU* self) {
 
 void nmi(CPU* self) {
     cpu_push_word(self, self->pc);
-    php(self);
+    cpu_push(self, cpu_get_flags(self) & (u8)~0x10);
     sei(self);
+    self->irq_disable_for_poll = true;
     self->pc = cpu_read_word(self, CPU_NMI_VECTOR);
     self->inst_cycles += 7;
 }
@@ -1068,6 +1098,7 @@ void irq(CPU* self) {
     cpu_push_word(self, self->pc);
     cpu_push(self, cpu_get_flags(self) & (u8)~0x10);
     sei(self);
+    self->irq_disable_for_poll = true;
     self->pc = cpu_read_word(self, CPU_IRQ_VECTOR);
     self->inst_cycles += 7;
 }
@@ -1161,7 +1192,91 @@ void bvs_rel(CPU* self, u8 offset) {
     }
 }
 
+// Unofficial NMOS 6502 instructions used by the NES CPU.
+
+void slo(CPU* self, u16 addr) {
+    u8 value = cpu_read_byte(self, addr);
+    u8 old_value = value;
+    self->carry_flag = (value & 0x80) != 0;
+    value <<= 1;
+    cpu_write_rmw(self, addr, old_value, value);
+    ora_imm(self, value);
+}
+
+void rla(CPU* self, u16 addr) {
+    u8 value = cpu_read_byte(self, addr);
+    u8 old_value = value;
+    bool old_carry = self->carry_flag;
+    self->carry_flag = (value & 0x80) != 0;
+    value = (u8)((value << 1) | old_carry);
+    cpu_write_rmw(self, addr, old_value, value);
+    and_imm(self, value);
+}
+
+void sre(CPU* self, u16 addr) {
+    u8 value = cpu_read_byte(self, addr);
+    u8 old_value = value;
+    self->carry_flag = value & 1;
+    value >>= 1;
+    cpu_write_rmw(self, addr, old_value, value);
+    eor_imm(self, value);
+}
+
+void rra(CPU* self, u16 addr) {
+    u8 value = cpu_read_byte(self, addr);
+    u8 old_value = value;
+    bool old_carry = self->carry_flag;
+    self->carry_flag = value & 1;
+    value = (u8)((value >> 1) | (old_carry ? 0x80 : 0));
+    cpu_write_rmw(self, addr, old_value, value);
+    adc_imm(self, value);
+}
+
+void sax(CPU* self, u16 addr) {
+    cpu_write_byte(self, addr, self->a & self->x);
+}
+
+void lax(CPU* self, u8 value) {
+    self->a = value;
+    self->x = value;
+    cpu_update_nz(self, value);
+}
+
+void dcp(CPU* self, u16 addr) {
+    u8 value = cpu_read_byte(self, addr);
+    u8 old_value = value;
+    value--;
+    cpu_write_rmw(self, addr, old_value, value);
+    cmp_vals(self, self->a, value);
+}
+
+void isc(CPU* self, u16 addr) {
+    u8 value = cpu_read_byte(self, addr);
+    u8 old_value = value;
+    value++;
+    cpu_write_rmw(self, addr, old_value, value);
+    sbc_imm(self, value);
+}
+
+u16 indirect_y_base_addr(CPU* self, u8 addr) {
+    u8 addr2 = addr + 1;
+    return (u16)((u16)cpu_read_byte(self, addr) | ((u16)cpu_read_byte(self, addr2) << 8));
+}
+
+u16 unstable_store_addr(u16 base, u8 index, u8* value) {
+    u16 effective = base + index;
+    if (page_boundary_crossed(base, effective)) {
+        effective = (u16)(((u16)*value << 8) | (effective & 0xff));
+    }
+    return effective;
+}
+
 usize cpu_step(CPU* self) {
+    if (self->halted) {
+        self->total_cycles++;
+        return 1;
+    }
+
     if (self->apu->dmc.cpu_stall_cycles > 0) {
         self->apu->dmc.cpu_stall_cycles--;
         return 1;
@@ -1176,7 +1291,7 @@ usize cpu_step(CPU* self) {
     if (self->ppu->nmi_triggered) {
         self->ppu->nmi_triggered = false;
         nmi(self);
-    } else if (!self->interrupt_disable_flag && (apu_is_asserting_irq(self->apu) || mapper_is_asserting_irq(self->mapper))) {
+    } else if (!self->irq_disable_for_poll && (apu_is_asserting_irq(self->apu) || mapper_is_asserting_irq(self->mapper))) {
         irq(self);
     } else {
         goto execute_instruction;
@@ -1188,6 +1303,8 @@ usize cpu_step(CPU* self) {
     return interrupt_cycles;
 
 execute_instruction:
+    ;
+    bool interrupt_disable_before = self->interrupt_disable_flag;
     self->pc++;
 
     switch (opcode) {
@@ -1342,6 +1459,171 @@ execute_instruction:
         case 0x76: ror_zpx(self, cpu_next_byte(self)); break;
         case 0x6E: ror_abs(self, cpu_next_word(self)); break;
         case 0x7E: ror_absx(self, cpu_next_word(self)); break;
+
+        // Unofficial NOPs
+        case 0x1A: case 0x3A: case 0x5A: case 0x7A: case 0xDA: case 0xFA:
+            nop(self); break;
+        case 0x80: case 0x82: case 0x89: case 0xC2: case 0xE2:
+            (void)cpu_next_byte(self); break;
+        case 0x04: case 0x44: case 0x64:
+            (void)zero_page(self, cpu_next_byte(self)); break;
+        case 0x14: case 0x34: case 0x54: case 0x74: case 0xD4: case 0xF4:
+            (void)zero_page_x(self, cpu_next_byte(self)); break;
+        case 0x0C:
+            (void)absolute(self, cpu_next_word(self)); break;
+        case 0x1C: case 0x3C: case 0x5C: case 0x7C: case 0xDC: case 0xFC:
+            (void)absolute_x(self, cpu_next_word(self)); break;
+
+        // SLO: ASL then ORA
+        case 0x03: slo(self, indirect_x_addr(self, cpu_next_byte(self))); break;
+        case 0x07: slo(self, cpu_next_byte(self)); break;
+        case 0x0F: slo(self, cpu_next_word(self)); break;
+        case 0x13: slo(self, indirect_y_addr(self, cpu_next_byte(self))); break;
+        case 0x17: slo(self, zero_page_x_addr(self, cpu_next_byte(self))); break;
+        case 0x1B: slo(self, cpu_next_word(self) + self->y); break;
+        case 0x1F: slo(self, cpu_next_word(self) + self->x); break;
+
+        // RLA: ROL then AND
+        case 0x23: rla(self, indirect_x_addr(self, cpu_next_byte(self))); break;
+        case 0x27: rla(self, cpu_next_byte(self)); break;
+        case 0x2F: rla(self, cpu_next_word(self)); break;
+        case 0x33: rla(self, indirect_y_addr(self, cpu_next_byte(self))); break;
+        case 0x37: rla(self, zero_page_x_addr(self, cpu_next_byte(self))); break;
+        case 0x3B: rla(self, cpu_next_word(self) + self->y); break;
+        case 0x3F: rla(self, cpu_next_word(self) + self->x); break;
+
+        // SRE: LSR then EOR
+        case 0x43: sre(self, indirect_x_addr(self, cpu_next_byte(self))); break;
+        case 0x47: sre(self, cpu_next_byte(self)); break;
+        case 0x4F: sre(self, cpu_next_word(self)); break;
+        case 0x53: sre(self, indirect_y_addr(self, cpu_next_byte(self))); break;
+        case 0x57: sre(self, zero_page_x_addr(self, cpu_next_byte(self))); break;
+        case 0x5B: sre(self, cpu_next_word(self) + self->y); break;
+        case 0x5F: sre(self, cpu_next_word(self) + self->x); break;
+
+        // RRA: ROR then ADC
+        case 0x63: rra(self, indirect_x_addr(self, cpu_next_byte(self))); break;
+        case 0x67: rra(self, cpu_next_byte(self)); break;
+        case 0x6F: rra(self, cpu_next_word(self)); break;
+        case 0x73: rra(self, indirect_y_addr(self, cpu_next_byte(self))); break;
+        case 0x77: rra(self, zero_page_x_addr(self, cpu_next_byte(self))); break;
+        case 0x7B: rra(self, cpu_next_word(self) + self->y); break;
+        case 0x7F: rra(self, cpu_next_word(self) + self->x); break;
+
+        // SAX and LAX
+        case 0x83: sax(self, indirect_x_addr(self, cpu_next_byte(self))); break;
+        case 0x87: sax(self, cpu_next_byte(self)); break;
+        case 0x8F: sax(self, cpu_next_word(self)); break;
+        case 0x97: sax(self, zero_page_y_addr(self, cpu_next_byte(self))); break;
+        case 0xA3: lax(self, indirect_x_val(self, cpu_next_byte(self))); break;
+        case 0xA7: lax(self, zero_page(self, cpu_next_byte(self))); break;
+        case 0xAB: {
+            u8 value = (self->a | UNSTABLE_MAGIC) & cpu_next_byte(self);
+            lax(self, value);
+            break;
+        }
+        case 0xAF: lax(self, absolute(self, cpu_next_word(self))); break;
+        case 0xB3: lax(self, indirect_y_val(self, cpu_next_byte(self))); break;
+        case 0xB7: lax(self, zero_page_y(self, cpu_next_byte(self))); break;
+        case 0xBF: lax(self, absolute_y(self, cpu_next_word(self))); break;
+
+        // DCP: DEC then CMP
+        case 0xC3: dcp(self, indirect_x_addr(self, cpu_next_byte(self))); break;
+        case 0xC7: dcp(self, cpu_next_byte(self)); break;
+        case 0xCF: dcp(self, cpu_next_word(self)); break;
+        case 0xD3: dcp(self, indirect_y_addr(self, cpu_next_byte(self))); break;
+        case 0xD7: dcp(self, zero_page_x_addr(self, cpu_next_byte(self))); break;
+        case 0xDB: dcp(self, cpu_next_word(self) + self->y); break;
+        case 0xDF: dcp(self, cpu_next_word(self) + self->x); break;
+
+        // ISC: INC then SBC
+        case 0xE3: isc(self, indirect_x_addr(self, cpu_next_byte(self))); break;
+        case 0xE7: isc(self, cpu_next_byte(self)); break;
+        case 0xEF: isc(self, cpu_next_word(self)); break;
+        case 0xF3: isc(self, indirect_y_addr(self, cpu_next_byte(self))); break;
+        case 0xF7: isc(self, zero_page_x_addr(self, cpu_next_byte(self))); break;
+        case 0xFB: isc(self, cpu_next_word(self) + self->y); break;
+        case 0xFF: isc(self, cpu_next_word(self) + self->x); break;
+
+        // Immediate unofficial ALU instructions
+        case 0x0B: case 0x2B:
+            and_imm(self, cpu_next_byte(self));
+            self->carry_flag = self->neg_flag;
+            break;
+        case 0x4B:
+            and_imm(self, cpu_next_byte(self));
+            lsr_acc(self);
+            break;
+        case 0x6B: {
+            and_imm(self, cpu_next_byte(self));
+            bool old_carry = self->carry_flag;
+            self->a = (u8)((self->a >> 1) | (old_carry ? 0x80 : 0));
+            cpu_update_nz(self, self->a);
+            self->carry_flag = (self->a & 0x40) != 0;
+            self->overflow_flag = ((self->a >> 6) ^ (self->a >> 5)) & 1;
+            break;
+        }
+        case 0x8B:
+            self->a = (self->a | UNSTABLE_MAGIC) & self->x & cpu_next_byte(self);
+            cpu_update_nz(self, self->a);
+            break;
+        case 0xCB: {
+            u8 value = cpu_next_byte(self);
+            u8 lhs = self->a & self->x;
+            self->carry_flag = lhs >= value;
+            self->x = lhs - value;
+            cpu_update_nz(self, self->x);
+            break;
+        }
+        case 0xEB: sbc_imm(self, cpu_next_byte(self)); break;
+
+        // Unstable store-family instructions. These use the commonly observed
+        // NMOS behavior, including high-byte corruption on a page crossing.
+        case 0x93: {
+            u16 base = indirect_y_base_addr(self, cpu_next_byte(self));
+            u8 value = self->a & self->x & (u8)((base >> 8) + 1);
+            cpu_write_byte(self, unstable_store_addr(base, self->y, &value), value);
+            break;
+        }
+        case 0x9F: {
+            u16 base = cpu_next_word(self);
+            u8 value = self->a & self->x & (u8)((base >> 8) + 1);
+            cpu_write_byte(self, unstable_store_addr(base, self->y, &value), value);
+            break;
+        }
+        case 0x9B: {
+            u16 base = cpu_next_word(self);
+            self->sp = self->a & self->x;
+            u8 value = self->sp & (u8)((base >> 8) + 1);
+            cpu_write_byte(self, unstable_store_addr(base, self->y, &value), value);
+            break;
+        }
+        case 0x9C: {
+            u16 base = cpu_next_word(self);
+            u8 value = self->y & (u8)((base >> 8) + 1);
+            cpu_write_byte(self, unstable_store_addr(base, self->x, &value), value);
+            break;
+        }
+        case 0x9E: {
+            u16 base = cpu_next_word(self);
+            u8 value = self->x & (u8)((base >> 8) + 1);
+            cpu_write_byte(self, unstable_store_addr(base, self->y, &value), value);
+            break;
+        }
+        case 0xBB: {
+            u8 value = absolute_y(self, cpu_next_word(self)) & self->sp;
+            self->a = value;
+            self->x = value;
+            self->sp = value;
+            cpu_update_nz(self, value);
+            break;
+        }
+
+        // KIL/JAM: the CPU remains stopped until reset.
+        case 0x02: case 0x12: case 0x22: case 0x32: case 0x42: case 0x52:
+        case 0x62: case 0x72: case 0x92: case 0xB2: case 0xD2: case 0xF2:
+            self->halted = true;
+            break;
         default:
             LOG("Unsupported instruction: 0x%02X at PC: 0x%04X\n", opcode, self->pc - 1);
             exit(1); 
@@ -1349,6 +1631,11 @@ execute_instruction:
     }
 
     self->inst_cycles += INST_CYCLES[opcode];
+    if (opcode == 0x58 || opcode == 0x78 || opcode == 0x28) {
+        self->irq_disable_for_poll = interrupt_disable_before;
+    } else {
+        self->irq_disable_for_poll = self->interrupt_disable_flag;
+    }
     usize step_cycles = self->inst_cycles;
     self->total_cycles += step_cycles;
     self->inst_cycles = 0;

@@ -71,6 +71,7 @@ void mapper_uxrom_init(Mapper_UXROM* mapper) {
     mapper->base.init = uxrom_init;
     mapper->base.reset = uxrom_reset;
     mapper->base.write = uxrom_write;
+    mapper->base.write_rmw = NULL;
     mapper->base.read = uxrom_read;
     mapper->base.ppu_address = NULL;
     mapper->base.ppu_tick = NULL;

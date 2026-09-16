@@ -220,6 +220,7 @@ void mapper_mmc3_init(Mapper_MMC3* mapper) {
     mapper->base.init = mmc3_init;
     mapper->base.reset = mmc3_reset;
     mapper->base.write = mmc3_write;
+    mapper->base.write_rmw = NULL;
     mapper->base.read = mmc3_read;
     mapper->base.ppu_address = mmc3_ppu_address;
     mapper->base.ppu_tick = mmc3_ppu_tick;
