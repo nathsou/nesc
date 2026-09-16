@@ -1,5 +1,6 @@
 #include "cart.h"
 #include "mmc3.h"
+#include "mmc1.h"
 #include "uxrom.h"
 #include "ppu.h"
 
@@ -46,6 +47,19 @@ static void test_uxrom(void) {
     EXPECT_EQ(uxrom.base.read((Mapper*)&uxrom, 0x6000), 0xa5);
     uxrom.base.write((Mapper*)&uxrom, 0x0010, 0x5a);
     EXPECT_EQ(uxrom.base.read((Mapper*)&uxrom, 0x0010), 0x5a);
+}
+
+static void test_mmc1_rmw_write_filter(void) {
+    u8 prg[2 * 0x4000] = {0};
+    u8 chr[0x2000] = {0};
+    Cart cart = cart_create(test_header(2, 1, NT_MIRRORING_HORIZONTAL), prg, sizeof(prg), chr, sizeof(chr));
+    Mapper_MMC1 mmc1 = {0};
+    mapper_mmc1_init(&mmc1);
+    mmc1.base.init((Mapper*)&mmc1, &cart);
+    mmc1.shift_reg = 0b10000;
+
+    mmc1.base.write_rmw((Mapper*)&mmc1, 0xe000, 1, 0);
+    EXPECT_EQ(mmc1.shift_reg, 0b11000);
 }
 
 static void mmc3_write_register(Mapper_MMC3* mmc3, u8 reg, u8 value, u8 modes) {
@@ -172,6 +186,7 @@ static void test_mmc3_nametable_mapping(void) {
 }
 
 int main(void) {
+    test_mmc1_rmw_write_filter();
     test_uxrom();
     test_mmc3();
     test_mmc3_nametable_mapping();

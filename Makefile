@@ -15,7 +15,8 @@ endif
 
 OBJECTS = raylib-quickstart/bin/Debug/libraylib.a
 SOURCES += src/main.c src/lib/*.c
-TEST_SOURCES = tests/mappers_test.c src/lib/cart.c src/lib/uxrom.c src/lib/mmc3.c src/lib/ppu.c
+TEST_SOURCES = tests/mappers_test.c src/lib/cart.c src/lib/mmc1.c src/lib/uxrom.c src/lib/mmc3.c src/lib/ppu.c
+CPU_TEST_SOURCES = tests/cpu_test.c src/lib/*.c
 
 .PHONY: clean test rom-test
 
@@ -25,9 +26,11 @@ build: clean
 test:
 	$(CC) $(CFLAGS) -Isrc/lib -o mapper-tests $(TEST_SOURCES)
 	./mapper-tests
+	$(CC) $(CFLAGS) -Isrc/lib -o cpu-tests $(CPU_TEST_SOURCES) -lm -lpthread
+	./cpu-tests
 
 rom-test:
 	$(CC) $(CFLAGS) -Isrc/lib -o rom-test tests/rom_runner.c src/lib/*.c -lm -lpthread
 
 clean:
-	rm -f nesc
+	rm -f nesc mapper-tests cpu-tests rom-test

@@ -95,6 +95,14 @@ void mmc1_write(Mapper* self, u16 addr, u8 value) {
     }
 }
 
+void mmc1_write_rmw(Mapper* self, u16 addr, u8 old_value, u8 new_value) {
+    (void)new_value;
+    // MMC1 ignores writes on consecutive CPU cycles. For a read-modify-write
+    // instruction it accepts the first (unmodified) value and ignores the
+    // immediately following modified value.
+    mmc1_write(self, addr, old_value);
+}
+
 u8 mmc1_read(Mapper* self, u16 addr) {
     Mapper_MMC1* mmc1 = (Mapper_MMC1*)self;
 
@@ -154,6 +162,7 @@ void mapper_mmc1_init(Mapper_MMC1 *mapper) {
     mapper->base.init = mmc1_init;
     mapper->base.reset = mmc1_reset;
     mapper->base.write = mmc1_write;
+    mapper->base.write_rmw = mmc1_write_rmw;
     mapper->base.read = mmc1_read;
     mapper->base.ppu_address = NULL;
     mapper->base.ppu_tick = NULL;

@@ -28,6 +28,8 @@ typedef struct {
     bool carry_flag, zero_flag, neg_flag, decimal_flag, overflow_flag, break_flag, interrupt_disable_flag;
     u8 ram[2048];
     usize inst_cycles, total_cycles, stall_cycles;
+    bool irq_disable_for_poll;
+    bool halted;
     u8 controller1_state, controller1_btn_index;
     bool controller1_strobe;
 } CPU;

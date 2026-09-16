@@ -45,6 +45,7 @@ void mapper_nrom_init(Mapper_NROM* mapper) {
     mapper->base.init = nrom_init;
     mapper->base.reset = nrom_reset;
     mapper->base.write = nrom_write;
+    mapper->base.write_rmw = NULL;
     mapper->base.read = nrom_read;
     mapper->base.ppu_address = NULL;
     mapper->base.ppu_tick = NULL;
