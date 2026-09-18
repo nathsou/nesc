@@ -10,6 +10,29 @@
 
 static inline void ppu_notify_bus_address(PPU* self, u16 addr);
 
+static u32 PATTERN_LOW_PIXELS[256];
+static u32 PATTERN_HIGH_PIXELS[256];
+static bool pattern_pixel_tables_initialized;
+
+static void ppu_initialize_pattern_pixel_tables(void) {
+    if (pattern_pixel_tables_initialized) {
+        return;
+    }
+
+    for (usize value = 0; value < 256; value++) {
+        u32 low_pixels = 0;
+        u32 high_pixels = 0;
+        for (usize pixel = 0; pixel < 8; pixel++) {
+            usize shift = (7 - pixel) * 4;
+            low_pixels |= ((u32)(value >> (7 - pixel)) & 1) << shift;
+            high_pixels |= ((u32)(value >> (7 - pixel)) & 1) << (shift + 1);
+        }
+        PATTERN_LOW_PIXELS[value] = low_pixels;
+        PATTERN_HIGH_PIXELS[value] = high_pixels;
+    }
+    pattern_pixel_tables_initialized = true;
+}
+
 // 64 RGB colors
 const u8 COLOR_PALETTE[] = {
    0x80, 0x80, 0x80, 0x00, 0x3D, 0xA6, 0x00, 0x12, 0xB0, 0x44, 0x00, 0x96, 0xA1, 0x00, 0x5E,
@@ -41,6 +64,7 @@ void ppu_reset(PPU* self) {
 }
 
 void ppu_init(PPU* self, Cart *cart, Mapper* mapper) {
+    ppu_initialize_pattern_pixel_tables();
     self->scanlines = 0;
     self->dots = 0;
     self->frame_count = 0;
@@ -69,12 +93,7 @@ void ppu_init(PPU* self, Cart *cart, Mapper* mapper) {
     self->attribute_byte = 0;
     self->pattern_low_byte = 0;
     self->pattern_high_byte = 0;
-    self->pattern_data_shift_registers[0] = 0;
-    self->pattern_data_shift_registers[1] = 0;
-    self->attribute_data_latches[0] = false;
-    self->attribute_data_latches[1] = false;
-    self->attribute_data_shift_registers[0] = 0;
-    self->attribute_data_shift_registers[1] = 0;
+    self->background_pixels = 0;
     memset(self->sprite_line, 0, sizeof(self->sprite_line));
     self->visible_scanline_sprites = 0;
     ppu_clear_frame(self);
@@ -332,10 +351,11 @@ void ppu_fetch_attribute_byte(PPU* self) {
 }
 
 void ppu_store_tile_data(PPU* self) {
-    self->pattern_data_shift_registers[0] = (u16)(self->pattern_data_shift_registers[0] | self->pattern_low_byte);
-    self->pattern_data_shift_registers[1] = (u16)(self->pattern_data_shift_registers[1] | self->pattern_high_byte);
-    self->attribute_data_latches[0] = self->attribute_byte & 1;
-    self->attribute_data_latches[1] = self->attribute_byte & 2;
+    u32 palette = (u32)(self->attribute_byte << 2) * UINT32_C(0x11111111);
+    u32 pixels = PATTERN_LOW_PIXELS[self->pattern_low_byte]
+        | PATTERN_HIGH_PIXELS[self->pattern_high_byte]
+        | palette;
+    self->background_pixels |= pixels;
 }
 
 void ppu_fetch_pattern_bytes(PPU* self) {
@@ -361,13 +381,9 @@ BackgroundPixelData ppu_get_background_pixel(PPU* self) {
         u8 palette_index = 0;
 
         if (self->mask_reg & PPU_MASK_SHOW_BACKGROUND) {
-            u8 pattern0 = (u8)(self->pattern_data_shift_registers[0] >> (15 - self->x_reg)) & 1;
-            u8 pattern1 = (u8)(self->pattern_data_shift_registers[1] >> (15 - self->x_reg)) & 1;
-            u8 pattern = (u8)((pattern1 << 1) | pattern0);
-            u8 attr0 = (u8)(self->attribute_data_shift_registers[0] >> (7 - self->x_reg)) & 1;
-            u8 attr1 = (u8)(self->attribute_data_shift_registers[1] >> (7 - self->x_reg)) & 1;
-            u8 attr = (u8)((attr1 << 1) | attr0);
-            u8 pixel_attribute_and_pattern = (u8)((attr << 2) | pattern);
+            usize shift = (15 - self->x_reg) * 4;
+            u8 pixel_attribute_and_pattern = (u8)(self->background_pixels >> shift) & 0x0f;
+            u8 pattern = pixel_attribute_and_pattern & 3;
 
             if (pattern != 0) { // if pixel is not transparent
                 palette_index = pixel_attribute_and_pattern; // Use AAPP as the offset (0-15)
@@ -586,12 +602,7 @@ bool ppu_step(PPU* self, usize cycles) {
             }
 
             if (render_line && fetch_cycle) {
-                self->attribute_data_shift_registers[0] <<= 1;
-                self->attribute_data_shift_registers[1] <<= 1;
-                self->attribute_data_shift_registers[0] |= (u16)self->attribute_data_latches[0];
-                self->attribute_data_shift_registers[1] |= (u16)self->attribute_data_latches[1];
-                self->pattern_data_shift_registers[0] <<= 1;
-                self->pattern_data_shift_registers[1] <<= 1;
+                self->background_pixels <<= 4;
 
                 switch (self->dots & 7) {
                     case 1: {

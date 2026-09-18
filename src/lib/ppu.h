@@ -74,9 +74,7 @@ typedef struct {
     u8 attribute_byte;
     u8 pattern_low_byte;
     u8 pattern_high_byte;
-    u16 pattern_data_shift_registers[2];
-    bool attribute_data_latches[2];
-    u8 attribute_data_shift_registers[2];
+    u64 background_pixels;
     SpriteData scanline_sprites[8];
     SpriteLinePixel sprite_line[SCREEN_WIDTH];
     u8 visible_scanline_sprites;
