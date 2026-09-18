@@ -17,6 +17,25 @@ typedef struct {
     Mapper* mapper;
 } NES;
 
+#ifdef NESC_COMPONENT_PROFILE
+typedef enum {
+    NES_PROFILE_CPU = 0,
+    NES_PROFILE_APU,
+    NES_PROFILE_PPU,
+    NES_PROFILE_OTHER,
+    NES_PROFILE_PHASE_COUNT,
+} NESComponentPhase;
+
+typedef struct {
+    u64 phase_samples[NES_PROFILE_PHASE_COUNT];
+} NESComponentProfile;
+
+void nes_component_profile_reset(void);
+bool nes_component_profile_start(void);
+void nes_component_profile_stop(void);
+NESComponentProfile nes_component_profile_read(void);
+#endif
+
 typedef struct {
     bool ok;
     char error[256];

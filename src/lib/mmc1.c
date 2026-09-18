@@ -1,6 +1,7 @@
 #include "mmc1.h"
 
 void mmc1_reset(Mapper* self);
+static void mmc1_refresh_chr(Mapper_MMC1* mmc1);
 
 void mmc1_init(Mapper* self, Cart* cart) {
     Mapper_MMC1* mmc1 = (Mapper_MMC1*)self;
@@ -16,9 +17,11 @@ void mmc1_reset(Mapper* self) {
     mmc1->control_reg = 0;
     mmc1->prg_mode = 3; // https://forums.nesdev.org/viewtopic.php?t=6766
     mmc1->chr_mode = 0;
+    mmc1->chr_bank[0] = mmc1->chr_bank[1] = 0;
     mmc1->prg_bank = 0;
     memset(mmc1->prg_ram, 0, sizeof(mmc1->prg_ram));
     memset(mmc1->chr_ram, 0, sizeof(mmc1->chr_ram));
+    mmc1_refresh_chr(mmc1);
 }
 
 void mmc1_write_control(Mapper_MMC1* mmc1, u8 value) {
@@ -37,6 +40,7 @@ void mmc1_write_control(Mapper_MMC1* mmc1, u8 value) {
     }
 
     mmc1->cart->header.mirroring = mirroring;
+    mmc1_refresh_chr(mmc1);
 }
 
 usize mmc1_chr_rom_offset(Mapper_MMC1* mmc1, u16 addr) {
@@ -54,6 +58,15 @@ usize mmc1_chr_rom_offset(Mapper_MMC1* mmc1, u16 addr) {
         } else {
             return (addr & 0xFFF) + (mmc1->chr_bank[1] * 4096);
         }
+    }
+}
+
+static void mmc1_refresh_chr(Mapper_MMC1* mmc1) {
+    for (usize page = 0; page < 8; page++) {
+        usize offset = mmc1_chr_rom_offset(mmc1, (u16)(page * 0x400));
+        mmc1->base.chr_pages[page] = mmc1->cart->chr_size == 0
+            ? mmc1->chr_ram + page * 0x400
+            : (offset + 0x400 <= mmc1->cart->chr_size ? mmc1->cart->chr_rom + offset : NULL);
     }
 }
 
@@ -89,6 +102,7 @@ void mmc1_write(Mapper* self, u16 addr, u8 value) {
                     mmc1->prg_bank = mmc1->shift_reg & 0b1111;
                 }
 
+                mmc1_refresh_chr(mmc1);
                 mmc1->shift_reg = 0b10000;
             }
         }
@@ -159,6 +173,7 @@ u8 mmc1_read(Mapper* self, u16 addr) {
 }
 
 void mapper_mmc1_init(Mapper_MMC1 *mapper) {
+    memset(mapper->base.chr_pages, 0, sizeof(mapper->base.chr_pages));
     mapper->base.init = mmc1_init;
     mapper->base.reset = mmc1_reset;
     mapper->base.write = mmc1_write;
@@ -166,6 +181,7 @@ void mapper_mmc1_init(Mapper_MMC1 *mapper) {
     mapper->base.read = mmc1_read;
     mapper->base.ppu_address = NULL;
     mapper->base.ppu_tick = NULL;
+    mapper->base.ppu_advance = NULL;
     mapper->base.is_asserting_irq = NULL;
     mapper->base.free = mmc1_free;
 }

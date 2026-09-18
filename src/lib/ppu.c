@@ -5,8 +5,33 @@
 #define BYTES_PER_PALETTE 4
 #define TILES_PER_ROW 32
 #define TILES_PER_COLUMN 30
+#define SPRITE_LINE_BEHIND_BACKGROUND 0x01
+#define SPRITE_LINE_SPRITE_ZERO 0x02
 
 static inline void ppu_notify_bus_address(PPU* self, u16 addr);
+
+static u32 PATTERN_LOW_PIXELS[256];
+static u32 PATTERN_HIGH_PIXELS[256];
+static bool pattern_pixel_tables_initialized;
+
+static void ppu_initialize_pattern_pixel_tables(void) {
+    if (pattern_pixel_tables_initialized) {
+        return;
+    }
+
+    for (usize value = 0; value < 256; value++) {
+        u32 low_pixels = 0;
+        u32 high_pixels = 0;
+        for (usize pixel = 0; pixel < 8; pixel++) {
+            usize shift = (7 - pixel) * 4;
+            low_pixels |= ((u32)(value >> (7 - pixel)) & 1) << shift;
+            high_pixels |= ((u32)(value >> (7 - pixel)) & 1) << (shift + 1);
+        }
+        PATTERN_LOW_PIXELS[value] = low_pixels;
+        PATTERN_HIGH_PIXELS[value] = high_pixels;
+    }
+    pattern_pixel_tables_initialized = true;
+}
 
 // 64 RGB colors
 const u8 COLOR_PALETTE[] = {
@@ -39,6 +64,7 @@ void ppu_reset(PPU* self) {
 }
 
 void ppu_init(PPU* self, Cart *cart, Mapper* mapper) {
+    ppu_initialize_pattern_pixel_tables();
     self->scanlines = 0;
     self->dots = 0;
     self->frame_count = 0;
@@ -67,12 +93,8 @@ void ppu_init(PPU* self, Cart *cart, Mapper* mapper) {
     self->attribute_byte = 0;
     self->pattern_low_byte = 0;
     self->pattern_high_byte = 0;
-    self->pattern_data_shift_registers[0] = 0;
-    self->pattern_data_shift_registers[1] = 0;
-    self->attribute_data_latches[0] = false;
-    self->attribute_data_latches[1] = false;
-    self->attribute_data_shift_registers[0] = 0;
-    self->attribute_data_shift_registers[1] = 0;
+    self->background_pixels = 0;
+    memset(self->sprite_line, 0, sizeof(self->sprite_line));
     self->visible_scanline_sprites = 0;
     ppu_clear_frame(self);
     ppu_reset(self);
@@ -182,51 +204,13 @@ void ppu_write_register(PPU* self, u16 addr, u8 value) {
 }
 
 u16 ppu_nametable_mirrored_addr(PPU* self, u16 addr) {
-    addr &= 0x2fff;
-
+    // CIRAM selects a page from PPU A10/A11; $3000 aliases $2000.
     switch (self->cart->header.mirroring) {
-        case NT_MIRRORING_HORIZONTAL:
-            if (addr >= 0x2000 && addr <= 0x23FF) {
-                return addr - 0x2000;                 // A
-            } else if (addr >= 0x2400 && addr <= 0x27FF) {
-                return addr - 0x2400;                 // A
-            } else if (addr >= 0x2800 && addr <= 0x2BFF) {
-                return addr - 0x2800 + 1024;          // B
-            } else {
-                return addr - 0x2C00 + 1024;          // B
-            }
-        case NT_MIRRORING_VERTICAL:
-            if (addr >= 0x2000 && addr <= 0x23FF) {
-                return addr - 0x2000;                 // A
-            } else if (addr >= 0x2400 && addr <= 0x27FF) {
-                return addr - 0x2400 + 1024;          // B
-            } else if (addr >= 0x2800 && addr <= 0x2BFF) {
-                return addr - 0x2800;                 // A
-            } else {
-                return addr - 0x2C00 + 1024;          // B
-            }
-        case NT_MIRRORING_ONE_SCREEN_LOWER_BANK:
-            if (addr >= 0x2000 && addr <= 0x23FF) {
-                return addr - 0x2000;                 // A
-            } else if (addr >= 0x2400 && addr <= 0x27FF) {
-                return addr - 0x2400;                 // A
-            } else if (addr >= 0x2800 && addr <= 0x2BFF) {
-                return addr - 0x2800;                 // A
-            } else {
-                return addr - 0x2C00;                 // A
-            }
-        case NT_MIRRORING_ONE_SCREEN_UPPER_BANK:
-            if (addr >= 0x2000 && addr <= 0x23FF) {
-                return addr - 0x2000 + 1024;          // B
-            } else if (addr >= 0x2400 && addr <= 0x27FF) {
-                return addr - 0x2400 + 1024;          // B
-            } else if (addr >= 0x2800 && addr <= 0x2BFF) {
-                return addr - 0x2800 + 1024;          // B
-            } else {
-                return addr - 0x2C00 + 1024;          // B
-            }
-        case NT_MIRRORING_FOUR_SCREEN:
-            return addr - 0x2000;
+        case NT_MIRRORING_HORIZONTAL: return (addr & 0x3ff) | ((addr >> 1) & 0x400);
+        case NT_MIRRORING_VERTICAL: return addr & 0x7ff;
+        case NT_MIRRORING_ONE_SCREEN_LOWER_BANK: return addr & 0x3ff;
+        case NT_MIRRORING_ONE_SCREEN_UPPER_BANK: return (addr & 0x3ff) | 0x400;
+        case NT_MIRRORING_FOUR_SCREEN: return addr & 0xfff;
     }
 
     #ifdef NESC_VERBOSE
@@ -243,7 +227,8 @@ static inline void ppu_notify_bus_address(PPU* self, u16 addr) {
 
 static inline u8 ppu_read_chr_rom(PPU* self, u16 addr) {
     ppu_notify_bus_address(self, addr);
-    return self->mapper->read(self->mapper, addr);
+    const u8* page = self->mapper->chr_pages[addr >> 10];
+    return page != NULL ? page[addr & 0x3ff] : self->mapper->read(self->mapper, addr);
 }
 
 static inline void ppu_write_chr_rom(PPU* self, u16 addr, u8 value) {
@@ -290,18 +275,11 @@ void ppu_write(PPU* self, u16 addr, u8 value) {
 }
 
 void ppu_set_pixel(PPU* self, usize x, usize y, u8 palette_color) {
-    usize index = (y * SCREEN_WIDTH + x) * 3;
-
-    if (index < SCREEN_WIDTH * SCREEN_HEIGHT * 3) {
-        usize offset = palette_color * 3;
-        u8 r = COLOR_PALETTE[offset];
-        u8 g = COLOR_PALETTE[offset + 1];
-        u8 b = COLOR_PALETTE[offset + 2];
-
-        self->frame[index] = r;
-        self->frame[index + 1] = g;
-        self->frame[index + 2] = b;
-    }
+    usize offset = palette_color * 3;
+    self->frame[y * SCREEN_WIDTH + x] = COLOR_PALETTE[offset]
+        | ((u32)COLOR_PALETTE[offset + 1] << 8)
+        | ((u32)COLOR_PALETTE[offset + 2] << 16)
+        | UINT32_C(0xff000000);
 }
 
 void ppu_scroll_increment_coarse_x(PPU* self) {
@@ -366,10 +344,11 @@ void ppu_fetch_attribute_byte(PPU* self) {
 }
 
 void ppu_store_tile_data(PPU* self) {
-    self->pattern_data_shift_registers[0] = (u16)(self->pattern_data_shift_registers[0] | self->pattern_low_byte);
-    self->pattern_data_shift_registers[1] = (u16)(self->pattern_data_shift_registers[1] | self->pattern_high_byte);
-    self->attribute_data_latches[0] = self->attribute_byte & 1;
-    self->attribute_data_latches[1] = self->attribute_byte & 2;
+    u32 palette = (u32)(self->attribute_byte << 2) * UINT32_C(0x11111111);
+    u32 pixels = PATTERN_LOW_PIXELS[self->pattern_low_byte]
+        | PATTERN_HIGH_PIXELS[self->pattern_high_byte]
+        | palette;
+    self->background_pixels |= pixels;
 }
 
 void ppu_fetch_pattern_bytes(PPU* self) {
@@ -395,13 +374,9 @@ BackgroundPixelData ppu_get_background_pixel(PPU* self) {
         u8 palette_index = 0;
 
         if (self->mask_reg & PPU_MASK_SHOW_BACKGROUND) {
-            u8 pattern0 = (u8)(self->pattern_data_shift_registers[0] >> (15 - self->x_reg)) & 1;
-            u8 pattern1 = (u8)(self->pattern_data_shift_registers[1] >> (15 - self->x_reg)) & 1;
-            u8 pattern = (u8)((pattern1 << 1) | pattern0);
-            u8 attr0 = (u8)(self->attribute_data_shift_registers[0] >> (7 - self->x_reg)) & 1;
-            u8 attr1 = (u8)(self->attribute_data_shift_registers[1] >> (7 - self->x_reg)) & 1;
-            u8 attr = (u8)((attr1 << 1) | attr0);
-            u8 pixel_attribute_and_pattern = (u8)((attr << 2) | pattern);
+            usize shift = (15 - self->x_reg) * 4;
+            u8 pixel_attribute_and_pattern = (u8)(self->background_pixels >> shift) & 0x0f;
+            u8 pattern = pixel_attribute_and_pattern & 3;
 
             if (pattern != 0) { // if pixel is not transparent
                 palette_index = pixel_attribute_and_pattern; // Use AAPP as the offset (0-15)
@@ -417,7 +392,7 @@ BackgroundPixelData ppu_get_background_pixel(PPU* self) {
 
 typedef struct {
     u8 palette_color;
-    u8 tile_index;
+    bool is_sprite_zero;
     bool behind_background;
     bool is_opaque;
 } SpritePixelData;
@@ -426,22 +401,15 @@ SpritePixelData ppu_get_sprite_pixel(PPU* self) {
     SpritePixelData pixel_data = {0};
     u16 x = (u16)(self->dots - 1);
 
-    if ((self->mask_reg & PPU_MASK_SHOW_SPRITES) && ((self->mask_reg & PPU_MASK_SHOW_SPRITES_LEFTMOST) || x > 7)) {
-        for (usize i = 0; i < self->visible_scanline_sprites; i++) {
-            SpriteData* s = &self->scanline_sprites[i];
-
-            if (x >= s->x && x < s->x + 8) {
-                u8 color_index = s->chr[x - s->x];
-
-                if (color_index != 0) {
-                    pixel_data.is_opaque = true;
-                    usize palette_index = SPRITES_PALETTES_OFFSET + s->palette_index * BYTES_PER_PALETTE + color_index - 1;
-                    pixel_data.palette_color = self->palette_table[palette_index] & 63;
-                    pixel_data.tile_index = s->tile_index;
-                    pixel_data.behind_background = s->behind_background;
-                    break;
-                }
-            }
+    if ((self->mask_reg & PPU_MASK_SHOW_SPRITES) &&
+        ((self->mask_reg & PPU_MASK_SHOW_SPRITES_LEFTMOST) || x > 7) &&
+        self->visible_scanline_sprites > 0) {
+        SpriteLinePixel* cached_pixel = &self->sprite_line[x];
+        if (cached_pixel->palette_index != 0) {
+            pixel_data.is_opaque = true;
+            pixel_data.palette_color = self->palette_table[cached_pixel->palette_index] & 63;
+            pixel_data.is_sprite_zero = (cached_pixel->flags & SPRITE_LINE_SPRITE_ZERO) != 0;
+            pixel_data.behind_background = (cached_pixel->flags & SPRITE_LINE_BEHIND_BACKGROUND) != 0;
         }
     }
 
@@ -467,7 +435,7 @@ void ppu_render_pixel(PPU* self) {
     ppu_set_pixel(self, x, y, palette_color);
 
     // Sprite 0 hit detection
-    if (sprite.tile_index == 0 && sprite.is_opaque && bg.is_opaque && x < 255 && !(self->status_reg & PPU_STATUS_SPRITE0_HIT)) {
+    if (sprite.is_sprite_zero && sprite.is_opaque && bg.is_opaque && x < 255 && !(self->status_reg & PPU_STATUS_SPRITE0_HIT)) {
         self->status_reg |= PPU_STATUS_SPRITE0_HIT;
     }
 }
@@ -550,17 +518,38 @@ void ppu_fetch_next_scanline_sprites(PPU* self) {
     }
 
     self->visible_scanline_sprites = count;
+
+    memset(self->sprite_line, 0, sizeof(self->sprite_line));
+    for (usize i = 0; i < count; i++) {
+        SpriteData* sprite = &self->scanline_sprites[i];
+
+        for (usize pixel = 0; pixel < 8; pixel++) {
+            usize x = (usize)sprite->x + pixel;
+            u8 color_index = sprite->chr[pixel];
+
+            if (x >= SCREEN_WIDTH || color_index == 0 || self->sprite_line[x].palette_index != 0) {
+                continue;
+            }
+
+            self->sprite_line[x].palette_index = (u8)(SPRITES_PALETTES_OFFSET +
+                sprite->palette_index * BYTES_PER_PALETTE + color_index - 1);
+            if (sprite->behind_background) {
+                self->sprite_line[x].flags |= SPRITE_LINE_BEHIND_BACKGROUND;
+            }
+            if (sprite->tile_index == 0) {
+                self->sprite_line[x].flags |= SPRITE_LINE_SPRITE_ZERO;
+            }
+        }
+    }
 }
 
-void ppu_tick(PPU* self) {
+static inline void ppu_tick(PPU* self, bool rendering_enabled) {
     self->total_cycles++;
     mapper_ppu_tick(self->mapper);
     if (self->should_trigger_nmi && (self->ctrl_reg & PPU_CTRL_NMI_ENABLE) && (self->status_reg & PPU_STATUS_VBLANK)) {
         self->should_trigger_nmi = false;
         self->nmi_triggered = true;
     }
-
-    bool rendering_enabled = (self->mask_reg & PPU_MASK_SHOW_BACKGROUND) || (self->mask_reg & PPU_MASK_SHOW_SPRITES);
 
     if (rendering_enabled && (self->frame_count & 1) && self->scanlines == 261 && self->dots == 339) {
         // skip cycle 339 of pre-render scanline
@@ -583,102 +572,131 @@ void ppu_tick(PPU* self) {
     }
 }
 
+static inline void ppu_advance_idle(PPU* self, usize cycles) {
+    self->total_cycles += cycles;
+    mapper_ppu_advance(self->mapper, cycles);
+    if (self->should_trigger_nmi && (self->ctrl_reg & PPU_CTRL_NMI_ENABLE)
+        && (self->status_reg & PPU_STATUS_VBLANK)) {
+        self->should_trigger_nmi = false;
+        self->nmi_triggered = true;
+    }
+    self->dots += cycles;
+}
+
+static inline void ppu_fetch_background_dot(PPU* self) {
+    self->background_pixels <<= 4;
+
+    switch (self->dots & 7) {
+        case 1: ppu_fetch_nametable_byte(self); break;
+        case 3: ppu_fetch_attribute_byte(self); break;
+        case 7: ppu_fetch_pattern_bytes(self); break;
+        case 0: ppu_store_tile_data(self); break;
+        default: break;
+    }
+}
+
+static inline void ppu_process_visible_dot(PPU* self, bool show_background,
+                                           bool show_sprites, bool rendering_enabled) {
+    usize dot = self->dots;
+
+    if (show_background) {
+        if (dot >= 1 && dot <= 256) {
+            ppu_render_pixel(self);
+            ppu_fetch_background_dot(self);
+            if ((dot & 7) == 0) {
+                ppu_scroll_increment_coarse_x(self);
+            }
+            if (dot == 256) {
+                ppu_scroll_increment_y(self);
+            }
+        } else if (dot >= 321 && dot <= 336) {
+            ppu_fetch_background_dot(self);
+            if ((dot & 7) == 0) {
+                ppu_scroll_increment_coarse_x(self);
+            }
+        } else if (dot == 257) {
+            ppu_scroll_copy_x(self);
+        }
+    }
+
+    if (show_sprites && dot == 257) {
+        ppu_fetch_next_scanline_sprites(self);
+    }
+
+    if (rendering_enabled && dot == 260) {
+        u16 sprite_pattern_table = self->ctrl_reg & PPU_CTRL_SPRITE_PATTERN_TABLE ? 0x1000 : 0;
+        ppu_notify_bus_address(self, sprite_pattern_table);
+    }
+}
+
+static inline void ppu_process_prerender_dot(PPU* self, bool show_background,
+                                             bool show_sprites, bool rendering_enabled) {
+    usize dot = self->dots;
+    bool fetch_dot = (dot >= 1 && dot <= 256) || (dot >= 321 && dot <= 336);
+
+    if (show_background) {
+        if (fetch_dot) {
+            ppu_fetch_background_dot(self);
+        }
+        if (dot >= 280 && dot <= 304) {
+            ppu_scroll_copy_y(self);
+        }
+        if (fetch_dot && (dot & 7) == 0) {
+            ppu_scroll_increment_coarse_x(self);
+        }
+        if (dot == 256) {
+            ppu_scroll_increment_y(self);
+        } else if (dot == 257) {
+            ppu_scroll_copy_x(self);
+        }
+    }
+
+    if (show_sprites && dot == 257) {
+        self->visible_scanline_sprites = 0;
+        memset(self->sprite_line, 0, sizeof(self->sprite_line));
+    }
+
+    if (rendering_enabled && dot == 260) {
+        u16 sprite_pattern_table = self->ctrl_reg & PPU_CTRL_SPRITE_PATTERN_TABLE ? 0x1000 : 0;
+        ppu_notify_bus_address(self, sprite_pattern_table);
+    }
+
+    if (dot == 1) {
+        self->status_reg &= ~(PPU_STATUS_VBLANK | PPU_STATUS_SPRITE0_HIT | PPU_STATUS_SPRITE_OVERFLOW);
+        ppu_detect_nmi_edge(self);
+    }
+}
+
 bool ppu_step(PPU* self, usize cycles) {
     bool new_frame = false;
+    // CPU register writes cannot interleave the dots in this call.
+    bool show_background = self->mask_reg & PPU_MASK_SHOW_BACKGROUND;
+    bool show_sprites = self->mask_reg & PPU_MASK_SHOW_SPRITES;
+    bool rendering_enabled = show_background || show_sprites;
+
+    bool inactive_line = self->scanlines >= 240 && self->scanlines < 261;
+    bool status_event_next = (self->scanlines == 241 || self->scanlines == 261)
+        && self->dots == 0;
+    if (cycles > 0 && (inactive_line || !rendering_enabled)
+        && !status_event_next && self->dots < 340) {
+        usize span = 340 - self->dots;
+        usize advance = cycles < span ? cycles : span;
+        ppu_advance_idle(self, advance);
+        cycles -= advance;
+    }
 
     for (usize i = 0; i < cycles; i++) {
-        ppu_tick(self);
+        ppu_tick(self, rendering_enabled);
 
-        bool show_background = self->mask_reg & PPU_MASK_SHOW_BACKGROUND;
-        bool show_sprites = self->mask_reg & PPU_MASK_SHOW_SPRITES;
-        bool rendering_enabled = show_background || show_sprites;
-        bool pre_render_line = self->scanlines == 261;
-        bool visible_line = self->scanlines < 240;
-        bool pre_fetch_cycle = self->dots >= 321 && self->dots <= 336; // fetch first 2 tiles of the next line
-        bool visible_cycle = self->dots >= 1 && self->dots <= 256;
-        bool fetch_cycle = pre_fetch_cycle || visible_cycle;
-        bool render_line = pre_render_line || visible_line;
-
-        if (show_background) {
-            if (visible_cycle && visible_line) {
-                ppu_render_pixel(self);
-            }
-
-            if (render_line && fetch_cycle) {
-                self->attribute_data_shift_registers[0] <<= 1;
-                self->attribute_data_shift_registers[1] <<= 1;
-                self->attribute_data_shift_registers[0] |= (u16)self->attribute_data_latches[0];
-                self->attribute_data_shift_registers[1] |= (u16)self->attribute_data_latches[1];
-                self->pattern_data_shift_registers[0] <<= 1;
-                self->pattern_data_shift_registers[1] <<= 1;
-
-                switch (self->dots & 7) {
-                    case 1: {
-                        ppu_fetch_nametable_byte(self);
-                        break;
-                    }
-                    case 3: {
-                        ppu_fetch_attribute_byte(self);
-                        break;
-                    }
-                    case 7: {
-                        ppu_fetch_pattern_bytes(self);
-                        break;
-                    }
-                    case 0: {
-                        ppu_store_tile_data(self);
-                        break;
-                    }
-                    default: {
-                        break;
-                    }
-                }
-            }
-
-            if (pre_render_line && self->dots >= 280 && self->dots <= 304) {
-                ppu_scroll_copy_y(self);
-            }
-
-            if (render_line) {
-                if (fetch_cycle && (self->dots & 7) == 0) {
-                    ppu_scroll_increment_coarse_x(self);
-                }
-
-                if (self->dots == 256) {
-                    ppu_scroll_increment_y(self);
-                } else if (self->dots == 257) {
-                    ppu_scroll_copy_x(self);
-                }
-            }
-        }
-
-
-        if (show_sprites && self->dots == 257) {
-            if (visible_line) {
-                ppu_fetch_next_scanline_sprites(self);
-            } else {
-                // clear secondary OAM
-                self->visible_scanline_sprites = 0;
-            }
-        }
-
-        // Sprite fetch slots occur even when no sprite is visible. This
-        // preserves the A12 transition MMC3 normally observes per scanline.
-        if (rendering_enabled && render_line && self->dots == 260) {
-            u16 sprite_pattern_table = self->ctrl_reg & PPU_CTRL_SPRITE_PATTERN_TABLE ? 0x1000 : 0;
-            ppu_notify_bus_address(self, sprite_pattern_table);
-        }
-
-        if (self->dots == 1) {
-            if (self->scanlines == 241) {
-                new_frame = true;
-                self->frame_count++;
-                self->status_reg |= PPU_STATUS_VBLANK;
-                ppu_detect_nmi_edge(self);
-            } else if (pre_render_line) {
-                self->status_reg &= ~(PPU_STATUS_VBLANK | PPU_STATUS_SPRITE0_HIT | PPU_STATUS_SPRITE_OVERFLOW);
-                ppu_detect_nmi_edge(self);
-            }
+        if (self->scanlines < 240) {
+            ppu_process_visible_dot(self, show_background, show_sprites, rendering_enabled);
+        } else if (self->scanlines == 261) {
+            ppu_process_prerender_dot(self, show_background, show_sprites, rendering_enabled);
+        } else if (self->scanlines == 241 && self->dots == 1) {
+            new_frame = true;
+            self->frame_count++;
+            self->status_reg |= PPU_STATUS_VBLANK;
+            ppu_detect_nmi_edge(self);
         }
     }
 

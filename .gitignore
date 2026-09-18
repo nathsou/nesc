@@ -1,9 +1,15 @@
 /**/*.nes
 nesc
+nes-bench
+nes-component-bench
+mapper-tests
+input-trace-tests
+frame-pacing-tests
+cpu-tests
+rom-test
 *.fdb
 .DS_Store
 *.dSYM
 .idea
 nestest.*
 /3ds
-frame-pacing-tests

@@ -9,6 +9,7 @@
 
 #define SCREEN_WIDTH 256
 #define SCREEN_HEIGHT 240
+#define PPU_FRAME_RGBA 1
 
 #define PPU_CTRL_NMI_ENABLE 128
 #define PPU_CTRL_SPRITE_SIZE 32
@@ -40,6 +41,11 @@ typedef struct {
 } SpriteData;
 
 typedef struct {
+    u8 palette_index; // 0 means transparent; sprite palette RAM indices are nonzero
+    u8 flags;
+} SpriteLinePixel;
+
+typedef struct {
     usize scanlines;
     usize dots;
     usize frame_count;
@@ -59,7 +65,7 @@ typedef struct {
     u16 t_reg;
     u8 x_reg; // fine X scroll
     u8 data_buffer; // internal buffer for data reads
-    u8 frame[SCREEN_WIDTH * SCREEN_HEIGHT * 3]; // 3 bytes per pixel (RGB)
+    u32 frame[SCREEN_WIDTH * SCREEN_HEIGHT];
     bool write_toggle; // w
     u8 oam_dma;
     bool nmi_triggered;
@@ -69,10 +75,9 @@ typedef struct {
     u8 attribute_byte;
     u8 pattern_low_byte;
     u8 pattern_high_byte;
-    u16 pattern_data_shift_registers[2];
-    bool attribute_data_latches[2];
-    u8 attribute_data_shift_registers[2];
+    u64 background_pixels;
     SpriteData scanline_sprites[8];
+    SpriteLinePixel sprite_line[SCREEN_WIDTH];
     u8 visible_scanline_sprites;
 } PPU;
 

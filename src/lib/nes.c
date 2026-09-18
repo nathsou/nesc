@@ -1,3 +1,9 @@
+#ifdef NESC_COMPONENT_PROFILE
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
+#endif
+
 #include "nes.h"
 #include "nrom.h"
 #include "mmc1.h"
@@ -7,6 +13,81 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
+
+#ifdef NESC_COMPONENT_PROFILE
+#include <signal.h>
+#include <sys/time.h>
+
+static NESComponentProfile nes_component_profile;
+static volatile sig_atomic_t nes_profile_phase = NES_PROFILE_OTHER;
+static volatile sig_atomic_t nes_profile_phase_samples[NES_PROFILE_PHASE_COUNT];
+static struct sigaction nes_profile_previous_action;
+static bool nes_profile_action_installed;
+
+static void nes_profile_sample_handler(int signal_number) {
+    (void)signal_number;
+    sig_atomic_t phase = nes_profile_phase;
+    if (phase >= 0 && phase < NES_PROFILE_PHASE_COUNT) {
+        nes_profile_phase_samples[phase]++;
+    }
+}
+
+void nes_component_profile_reset(void) {
+    memset(&nes_component_profile, 0, sizeof(nes_component_profile));
+    for (usize i = 0; i < NES_PROFILE_PHASE_COUNT; i++) {
+        nes_profile_phase_samples[i] = 0;
+    }
+    nes_profile_phase = NES_PROFILE_OTHER;
+}
+
+bool nes_component_profile_start(void) {
+    struct sigaction action = {0};
+    action.sa_handler = nes_profile_sample_handler;
+    sigemptyset(&action.sa_mask);
+    action.sa_flags = 0;
+    if (sigaction(SIGPROF, &action, &nes_profile_previous_action) != 0) {
+        return false;
+    }
+    nes_profile_action_installed = true;
+
+    struct itimerval timer = {0};
+    timer.it_value.tv_usec = 1000;
+    timer.it_interval.tv_usec = 1000;
+    if (setitimer(ITIMER_PROF, &timer, NULL) != 0) {
+        nes_component_profile_stop();
+        return false;
+    }
+    return true;
+}
+
+void nes_component_profile_stop(void) {
+    // The headless profiler is single-threaded. Drain a pending timer signal
+    // before restoring its previous handler (which may terminate the process).
+    sigset_t blocked, previous_mask, pending;
+    sigemptyset(&blocked);
+    sigaddset(&blocked, SIGPROF);
+    sigprocmask(SIG_BLOCK, &blocked, &previous_mask);
+    struct itimerval timer = {0};
+    setitimer(ITIMER_PROF, &timer, NULL);
+    if (sigpending(&pending) == 0 && sigismember(&pending, SIGPROF)) {
+        int signal_number;
+        sigwait(&blocked, &signal_number);
+    }
+    nes_profile_phase = NES_PROFILE_OTHER;
+    if (nes_profile_action_installed) {
+        sigaction(SIGPROF, &nes_profile_previous_action, NULL);
+        nes_profile_action_installed = false;
+    }
+    sigprocmask(SIG_SETMASK, &previous_mask, NULL);
+}
+
+NESComponentProfile nes_component_profile_read(void) {
+    for (usize i = 0; i < NES_PROFILE_PHASE_COUNT; i++) {
+        nes_component_profile.phase_samples[i] = (u64)nes_profile_phase_samples[i];
+    }
+    return nes_component_profile;
+}
+#endif
 
 static inline Result result_ok() {
     return (Result){ .ok = true, .error = "\n" };
@@ -136,13 +217,30 @@ void nes_step_frame(NES* nes) {
     usize cpu_cycles = 0;
     
     while (true) {
+#ifdef NESC_COMPONENT_PROFILE
+        nes_profile_phase = NES_PROFILE_CPU;
+#endif
         usize cpu_cycles = cpu_step(&nes->cpu);
+
+#ifdef NESC_COMPONENT_PROFILE
+        nes_profile_phase = NES_PROFILE_APU;
+#endif
         
         for (usize i = 0; i < cpu_cycles; i++) {
             apu_step(&nes->apu);
         }
 
-        if (ppu_step(&nes->ppu, cpu_cycles * 3)) {
+#ifdef NESC_COMPONENT_PROFILE
+        nes_profile_phase = NES_PROFILE_PPU;
+#endif
+
+        bool frame_complete = ppu_step(&nes->ppu, cpu_cycles * 3);
+
+#ifdef NESC_COMPONENT_PROFILE
+        nes_profile_phase = NES_PROFILE_OTHER;
+#endif
+
+        if (frame_complete) {
             break;
         }
     }

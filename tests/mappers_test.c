@@ -1,4 +1,5 @@
 #include "cart.h"
+#include "nrom.h"
 #include "mmc3.h"
 #include "mmc1.h"
 #include "uxrom.h"
@@ -185,7 +186,121 @@ static void test_mmc3_nametable_mapping(void) {
     }
 }
 
+// Compare every byte reached through the PPU cache with the mapper decoder.
+static void expect_chr_mapping(PPU* ppu) {
+    for (u16 addr = 0; addr < 0x2000; addr++) {
+        EXPECT_EQ(ppu_read(ppu, addr), ppu->mapper->read(ppu->mapper, addr));
+    }
+}
+
+static void serial_write(Mapper* mapper, u16 addr, u8 value) {
+    mapper->write(mapper, 0x8000, 0x80);
+    for (unsigned bit = 0; bit < 5; bit++) mapper->write(mapper, addr, (value >> bit) & 1);
+}
+
+static void test_chr_pages(void) {
+    u8 chr[0x8000];
+    for (usize i = 0; i < sizeof(chr); i++) chr[i] = (u8)((i >> 10) ^ i);
+    Cart cart = cart_create(test_header(0, 4, NT_MIRRORING_HORIZONTAL), NULL, 0, chr, sizeof(chr));
+    PPU ppu = {0};
+    Mapper_NROM nrom = {0};
+    mapper_nrom_init(&nrom);
+    nrom.base.init(&nrom.base, &cart);
+    ppu_init(&ppu, &cart, &nrom.base);
+    expect_chr_mapping(&ppu);
+    ppu_write(&ppu, 0x1234, 0xff);
+    EXPECT_EQ(ppu_read(&ppu, 0x1234), chr[0x1234]);
+
+    Mapper_MMC1 mmc1 = {0};
+    mapper_mmc1_init(&mmc1);
+    mmc1.base.init(&mmc1.base, &cart);
+    ppu_init(&ppu, &cart, &mmc1.base);
+    expect_chr_mapping(&ppu);
+    for (u8 mode = 0; mode < 2; mode++) {
+        serial_write(&mmc1.base, 0x8000, (u8)(0x0c | (mode << 4)));
+        for (u8 bank = 0; bank < 8; bank++) {
+            serial_write(&mmc1.base, 0xa000, bank);
+            serial_write(&mmc1.base, 0xc000, (u8)(7 - bank));
+            expect_chr_mapping(&ppu);
+        }
+    }
+    mmc1.base.reset(&mmc1.base);
+    expect_chr_mapping(&ppu);
+
+    Mapper_MMC3 mmc3 = {0};
+    mapper_mmc3_init(&mmc3);
+    mmc3.base.init(&mmc3.base, &cart);
+    ppu_init(&ppu, &cart, &mmc3.base);
+    for (u16 inversion = 0; inversion <= 0x80; inversion += 0x80) {
+        for (u8 reg = 0; reg < 6; reg++) {
+            mmc3.base.write(&mmc3.base, 0x8000, (u8)(inversion | reg));
+            mmc3.base.write(&mmc3.base, 0x8001, (u8)(35 + reg));
+            expect_chr_mapping(&ppu);
+        }
+    }
+    mmc3.base.reset(&mmc3.base);
+    expect_chr_mapping(&ppu);
+    // Cached reads must still notify MMC3 of filtered A12 edges.
+    mmc3.base.write(&mmc3.base, 0xc000, 0);
+    mmc3.base.write(&mmc3.base, 0xe001, 0);
+    ppu_read(&ppu, 0);
+    ppu_step(&ppu, 8);
+    ppu_read(&ppu, 0x1000);
+    EXPECT_EQ(mapper_is_asserting_irq(&mmc3.base), true);
+
+    // Live RAM pointers must reflect writes and remapping immediately.
+    cart.chr_size = 0;
+    mmc3.base.reset(&mmc3.base);
+    for (u8 reg = 0; reg < 6; reg++) {
+        mmc3.base.write(&mmc3.base, 0x8000, (u8)(0x80 | reg));
+        mmc3.base.write(&mmc3.base, 0x8001, (u8)(reg + 3));
+        ppu_write(&ppu, (u16)(reg * 0x400 + 17), (u8)(0x30 + reg));
+        expect_chr_mapping(&ppu);
+    }
+    mmc1.base.reset(&mmc1.base);
+    ppu_init(&ppu, &cart, &mmc1.base);
+    ppu_write(&ppu, 0x1fff, 0xa7);
+    EXPECT_EQ(ppu_read(&ppu, 0x1fff), 0xa7);
+    expect_chr_mapping(&ppu);
+
+    Mapper_UXROM uxrom = {0};
+    mapper_uxrom_init(&uxrom);
+    uxrom.base.init(&uxrom.base, &cart);
+    ppu_init(&ppu, &cart, &uxrom.base);
+    ppu_write(&ppu, 0x1fff, 0xb8);
+    EXPECT_EQ(ppu_read(&ppu, 0x1fff), 0xb8);
+    expect_chr_mapping(&ppu);
+    cart.chr_size = sizeof(chr);
+    uxrom.base.reset(&uxrom.base);
+    expect_chr_mapping(&ppu);
+    // Optional cache fallback for mappers that need read-side effects.
+    memset(uxrom.base.chr_pages, 0, sizeof(uxrom.base.chr_pages));
+    expect_chr_mapping(&ppu);
+}
+
+static void test_all_mirroring_addresses(void) {
+    Cart cart = {0};
+    PPU ppu = {0};
+    ppu.cart = &cart;
+    Mapper mapper = {0};
+    ppu.mapper = &mapper;
+    for (usize i = 0; i < sizeof(ppu.nametable); i++) ppu.nametable[i] = (u8)((i / 1024) * 53 + i % 1024);
+    const NametableMirroring modes[] = {NT_MIRRORING_HORIZONTAL, NT_MIRRORING_VERTICAL,
+        NT_MIRRORING_ONE_SCREEN_LOWER_BANK, NT_MIRRORING_ONE_SCREEN_UPPER_BANK,
+        NT_MIRRORING_FOUR_SCREEN};
+    const unsigned pages[][4] = {{0,0,1,1}, {0,1,0,1}, {0,0,0,0}, {1,1,1,1}, {0,1,2,3}};
+    for (usize mode = 0; mode < 5; mode++) {
+        cart.header.mirroring = modes[mode];
+        for (u16 addr = 0x2000; addr < 0x3f00; addr++) {
+            unsigned page = ((addr - 0x2000) / 1024) % 4;
+            EXPECT_EQ(ppu_read(&ppu, addr), (u8)(pages[mode][page] * 53 + addr % 1024));
+        }
+    }
+}
+
 int main(void) {
+    test_chr_pages();
+    test_all_mirroring_addresses();
     test_mmc1_rmw_write_filter();
     test_uxrom();
     test_mmc3();
