@@ -14,7 +14,7 @@ else ifeq ($(UNAME_S),Darwin) # macOS
 endif
 
 OBJECTS = raylib-quickstart/bin/Debug/libraylib.a
-SOURCES += src/main.c src/lib/*.c
+SOURCES += src/main.c src/frame_pacing.c src/lib/*.c
 TEST_SOURCES = tests/mappers_test.c src/lib/cart.c src/lib/mmc1.c src/lib/uxrom.c src/lib/mmc3.c src/lib/ppu.c
 CPU_TEST_SOURCES = tests/cpu_test.c src/lib/*.c
 
@@ -24,6 +24,8 @@ build: clean
 	$(CC) $(CFLAGS) -o nesc $(SOURCES) $(RAYLIB_FLAGS) $(OBJECTS)
 
 test:
+	$(CC) $(CFLAGS) -Isrc -o frame-pacing-tests tests/frame_pacing_test.c src/frame_pacing.c -lm
+	./frame-pacing-tests
 	$(CC) $(CFLAGS) -Isrc/lib -o mapper-tests $(TEST_SOURCES)
 	./mapper-tests
 	$(CC) $(CFLAGS) -Isrc/lib -o cpu-tests $(CPU_TEST_SOURCES) -lm -lpthread
@@ -33,4 +35,4 @@ rom-test:
 	$(CC) $(CFLAGS) -Isrc/lib -o rom-test tests/rom_runner.c src/lib/*.c -lm -lpthread
 
 clean:
-	rm -f nesc mapper-tests cpu-tests rom-test
+	rm -f nesc frame-pacing-tests mapper-tests cpu-tests rom-test

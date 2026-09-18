@@ -1,7 +1,10 @@
 #include "raylib.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <math.h>
 #include "lib/nes.h"
+#include "frame_pacing.h"
 
 #define SCALE_FACTOR 3
 #define WINDOW_WIDTH (SCREEN_WIDTH * SCALE_FACTOR)
@@ -9,7 +12,6 @@
 #define AUDIO_SAMPLE_RATE 44100
 #define AUDIO_STREAM_BUFFER_SIZE 512
 #define AUDIO_BUFFER_TARGET 2048
-#define AUDIO_BUFFER_LOW_WATER (2 * AUDIO_STREAM_BUFFER_SIZE)
 
 #define CONTROLLER_RIGHT 0b10000000
 #define CONTROLLER_LEFT 0b01000000
@@ -29,7 +31,7 @@
 #define CONTROLLER1_START_KEY KEY_ENTER
 #define CONTROLLER1_SELECT_KEY KEY_SPACE
 
-void handle_inputs(CPU* cpu) {
+u8 read_controller1_state(void) {
     u8 state = 0;
 
     // Keyboard inputs
@@ -42,7 +44,12 @@ void handle_inputs(CPU* cpu) {
     if (IsKeyDown(CONTROLLER1_START_KEY)) state |= CONTROLLER_START;
     if (IsKeyDown(CONTROLLER1_SELECT_KEY)) state |= CONTROLLER_SELECT;
 
-    cpu_update_controller1(cpu, state);
+    return state;
+}
+
+static void step_frame_with_input(NES* nes, u8 state) {
+    cpu_update_controller1(&nes->cpu, state);
+    nes_step_frame(nes);
 }
 
 APU* apu_instance = NULL;
@@ -53,13 +60,30 @@ void audio_input_callback(void* output_buffer, unsigned int frames) {
 }
 
 int main(int argc, char* argv[]) {
-    if (argc < 2) {
-        printf("Usage: %s <rom_path>\n", argv[0]);
+    const char* rom_path = NULL;
+    bool pacing_stats = false;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--pacing-stats") == 0) {
+            pacing_stats = true;
+        } else if (strcmp(argv[i], "--help") == 0) {
+            printf("Usage: %s [--pacing-stats] <rom_path>\n", argv[0]);
+            return 0;
+        } else if (rom_path == NULL) {
+            rom_path = argv[i];
+        } else {
+            fprintf(stderr, "Usage: %s [--pacing-stats] <rom_path>\n", argv[0]);
+            return 1;
+        }
+    }
+
+    if (rom_path == NULL) {
+        fprintf(stderr, "Usage: %s [--pacing-stats] <rom_path>\n", argv[0]);
         return 1;
     }
 
-    NES nes;
-    Result nes_init_res = nes_init_from_file(&nes, argv[1], AUDIO_SAMPLE_RATE);
+    NES nes = {0};
+    Result nes_init_res = nes_init_from_file(&nes, rom_path, AUDIO_SAMPLE_RATE);
 
     if (!nes_init_res.ok) {
         fprintf(stderr, "Error: %s\n", nes_init_res.error);
@@ -68,9 +92,10 @@ int main(int argc, char* argv[]) {
 
     apu_instance = &nes.apu;
 
-    SetTargetFPS(60);
     SetConfigFlags(FLAG_VSYNC_HINT | FLAG_WINDOW_HIGHDPI);
     InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "nesc");
+    // EndDrawing waits for vsync. A second FPS limiter can miss the next swap.
+    SetTargetFPS(0);
 
     SetAudioStreamBufferSizeDefault(AUDIO_STREAM_BUFFER_SIZE);
 
@@ -79,10 +104,9 @@ int main(int argc, char* argv[]) {
     SetAudioStreamCallback(stream, audio_input_callback);
 
     while (apu_buffered_samples(&nes.apu) < AUDIO_BUFFER_TARGET) {
-        nes_step_frame(&nes);
+        // Prime audio with neutral input before starting playback.
+        step_frame_with_input(&nes, 0);
     }
-
-    PlayAudioStream(stream);
 
     Image image = {
         .data = nes.ppu.frame,
@@ -100,23 +124,48 @@ int main(int argc, char* argv[]) {
 
     Rectangle source = { 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT };
     Rectangle dest = { 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT };
+    // Finish first-use graphics setup before starting the audio/video clocks.
+    BeginDrawing();
+        ClearBackground(WHITE);
+        DrawTexturePro(texture, source, dest, (Vector2){ 0, 0 }, 0.0f, WHITE);
+    EndDrawing();
     usize audio_underrun_samples = 0;
-    usize audio_diagnostic_frames = 0;
+    usize presentations = 0, emulated_frames = 0, repeats = 0, catchups = 0;
+    double previous_tick = GetTime();
+    double diagnostic_start = previous_tick;
+    double longest_tick = 0.0;
+    FramePacing pacing;
+    int display_hz = GetMonitorRefreshRate(GetCurrentMonitor());
+    frame_pacing_init(&pacing, previous_tick, display_hz, AUDIO_BUFFER_TARGET);
+    double applied_pitch = pacing.audio_pitch;
+    SetAudioStreamPitch(stream, (float)applied_pitch);
+    PlayAudioStream(stream);
+    if (pacing_stats) {
+        fprintf(stderr, "Pacing: display %d Hz, emulation %.4f Hz, vsync enabled\n", display_hz, pacing.frame_hz);
+    }
 
     while (!WindowShouldClose()) {
-        handle_inputs(&nes.cpu);
-
-        // Keep normal video pacing at one emulated frame per render tick.
-        nes_step_frame(&nes);
-
-        // A 60 Hz display consumes audio slightly faster than one NTSC NES
-        // frame produces it. Run one occasional recovery frame before the
-        // queue underruns, but never refill it with an unbounded frame burst.
-        if (apu_buffered_samples(&nes.apu) < AUDIO_BUFFER_LOW_WATER) {
-            nes_step_frame(&nes);
+        double now = GetTime();
+        double elapsed = now - previous_tick;
+        previous_tick = now;
+        if (elapsed > longest_tick) longest_tick = elapsed;
+        u8 input_state = read_controller1_state();
+        unsigned int frames = frame_pacing_advance(&pacing, now);
+        for (unsigned int frame = 0; frame < frames; frame++) {
+            step_frame_with_input(&nes, input_state);
         }
+        emulated_frames += frames;
+        repeats += frames == 0;
+        catchups += frames > 1;
+        presentations++;
 
-        UpdateTexture(texture, nes.ppu.frame);
+        if (frames > 0) UpdateTexture(texture, nes.ppu.frame);
+        double pitch = frame_pacing_audio_pitch(&pacing, (double)apu_buffered_samples(&nes.apu),
+                                                AUDIO_BUFFER_TARGET, elapsed);
+        if (fabs(pitch - applied_pitch) >= 0.00001) {
+            SetAudioStreamPitch(stream, (float)pitch);
+            applied_pitch = pitch;
+        }
 
         BeginDrawing();
             ClearBackground(WHITE);
@@ -124,13 +173,22 @@ int main(int argc, char* argv[]) {
         EndDrawing();
 
         audio_underrun_samples += apu_take_underrun_samples(&nes.apu);
-        audio_diagnostic_frames++;
-        if (audio_diagnostic_frames == 60) {
-            if (audio_underrun_samples > 0) {
-                fprintf(stderr, "Audio underrun: %zu samples in the last 60 frames\n", audio_underrun_samples);
+        double diagnostic_end = GetTime();
+        if (diagnostic_end - diagnostic_start >= 1.0) {
+            double seconds = diagnostic_end - diagnostic_start;
+            if (pacing_stats) {
+                fprintf(stderr, "Pacing: %.1f draws/s, %.1f emulated/s, repeats %zu, catchups %zu, "
+                        "max interval %.2f ms, queue %zu, pitch %.5f, underrun %zu, resyncs %u\n",
+                        (double)presentations / seconds, (double)emulated_frames / seconds,
+                        repeats, catchups, longest_tick * 1000.0, apu_buffered_samples(&nes.apu),
+                        applied_pitch, audio_underrun_samples, pacing.resyncs);
+            } else if (audio_underrun_samples > 0) {
+                fprintf(stderr, "Audio underrun: %zu samples in the last second\n", audio_underrun_samples);
             }
             audio_underrun_samples = 0;
-            audio_diagnostic_frames = 0;
+            presentations = emulated_frames = repeats = catchups = 0;
+            longest_tick = 0.0;
+            diagnostic_start = diagnostic_end;
         }
     }
 
@@ -139,6 +197,7 @@ int main(int argc, char* argv[]) {
     UnloadTexture(texture);
     CloseAudioDevice();
     CloseWindow();
+
     nes_free(&nes);
     apu_instance = NULL;
 
