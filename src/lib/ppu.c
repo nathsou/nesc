@@ -185,51 +185,13 @@ void ppu_write_register(PPU* self, u16 addr, u8 value) {
 }
 
 u16 ppu_nametable_mirrored_addr(PPU* self, u16 addr) {
-    addr &= 0x2fff;
-
+    // CIRAM selects a page from PPU A10/A11; $3000 aliases $2000.
     switch (self->cart->header.mirroring) {
-        case NT_MIRRORING_HORIZONTAL:
-            if (addr >= 0x2000 && addr <= 0x23FF) {
-                return addr - 0x2000;                 // A
-            } else if (addr >= 0x2400 && addr <= 0x27FF) {
-                return addr - 0x2400;                 // A
-            } else if (addr >= 0x2800 && addr <= 0x2BFF) {
-                return addr - 0x2800 + 1024;          // B
-            } else {
-                return addr - 0x2C00 + 1024;          // B
-            }
-        case NT_MIRRORING_VERTICAL:
-            if (addr >= 0x2000 && addr <= 0x23FF) {
-                return addr - 0x2000;                 // A
-            } else if (addr >= 0x2400 && addr <= 0x27FF) {
-                return addr - 0x2400 + 1024;          // B
-            } else if (addr >= 0x2800 && addr <= 0x2BFF) {
-                return addr - 0x2800;                 // A
-            } else {
-                return addr - 0x2C00 + 1024;          // B
-            }
-        case NT_MIRRORING_ONE_SCREEN_LOWER_BANK:
-            if (addr >= 0x2000 && addr <= 0x23FF) {
-                return addr - 0x2000;                 // A
-            } else if (addr >= 0x2400 && addr <= 0x27FF) {
-                return addr - 0x2400;                 // A
-            } else if (addr >= 0x2800 && addr <= 0x2BFF) {
-                return addr - 0x2800;                 // A
-            } else {
-                return addr - 0x2C00;                 // A
-            }
-        case NT_MIRRORING_ONE_SCREEN_UPPER_BANK:
-            if (addr >= 0x2000 && addr <= 0x23FF) {
-                return addr - 0x2000 + 1024;          // B
-            } else if (addr >= 0x2400 && addr <= 0x27FF) {
-                return addr - 0x2400 + 1024;          // B
-            } else if (addr >= 0x2800 && addr <= 0x2BFF) {
-                return addr - 0x2800 + 1024;          // B
-            } else {
-                return addr - 0x2C00 + 1024;          // B
-            }
-        case NT_MIRRORING_FOUR_SCREEN:
-            return addr - 0x2000;
+        case NT_MIRRORING_HORIZONTAL: return (addr & 0x3ff) | ((addr >> 1) & 0x400);
+        case NT_MIRRORING_VERTICAL: return addr & 0x7ff;
+        case NT_MIRRORING_ONE_SCREEN_LOWER_BANK: return addr & 0x3ff;
+        case NT_MIRRORING_ONE_SCREEN_UPPER_BANK: return (addr & 0x3ff) | 0x400;
+        case NT_MIRRORING_FOUR_SCREEN: return addr & 0xfff;
     }
 
     #ifdef NESC_VERBOSE
@@ -246,7 +208,8 @@ static inline void ppu_notify_bus_address(PPU* self, u16 addr) {
 
 static inline u8 ppu_read_chr_rom(PPU* self, u16 addr) {
     ppu_notify_bus_address(self, addr);
-    return self->mapper->read(self->mapper, addr);
+    const u8* page = self->mapper->chr_pages[addr >> 10];
+    return page != NULL ? page[addr & 0x3ff] : self->mapper->read(self->mapper, addr);
 }
 
 static inline void ppu_write_chr_rom(PPU* self, u16 addr, u8 value) {
@@ -571,15 +534,13 @@ void ppu_fetch_next_scanline_sprites(PPU* self) {
     }
 }
 
-void ppu_tick(PPU* self) {
+static inline void ppu_tick(PPU* self, bool rendering_enabled) {
     self->total_cycles++;
     mapper_ppu_tick(self->mapper);
     if (self->should_trigger_nmi && (self->ctrl_reg & PPU_CTRL_NMI_ENABLE) && (self->status_reg & PPU_STATUS_VBLANK)) {
         self->should_trigger_nmi = false;
         self->nmi_triggered = true;
     }
-
-    bool rendering_enabled = (self->mask_reg & PPU_MASK_SHOW_BACKGROUND) || (self->mask_reg & PPU_MASK_SHOW_SPRITES);
 
     if (rendering_enabled && (self->frame_count & 1) && self->scanlines == 261 && self->dots == 339) {
         // skip cycle 339 of pre-render scanline
@@ -604,13 +565,14 @@ void ppu_tick(PPU* self) {
 
 bool ppu_step(PPU* self, usize cycles) {
     bool new_frame = false;
+    // CPU register writes cannot interleave the dots in this call.
+    bool show_background = self->mask_reg & PPU_MASK_SHOW_BACKGROUND;
+    bool show_sprites = self->mask_reg & PPU_MASK_SHOW_SPRITES;
+    bool rendering_enabled = show_background || show_sprites;
 
     for (usize i = 0; i < cycles; i++) {
-        ppu_tick(self);
+        ppu_tick(self, rendering_enabled);
 
-        bool show_background = self->mask_reg & PPU_MASK_SHOW_BACKGROUND;
-        bool show_sprites = self->mask_reg & PPU_MASK_SHOW_SPRITES;
-        bool rendering_enabled = show_background || show_sprites;
         bool pre_render_line = self->scanlines == 261;
         bool visible_line = self->scanlines < 240;
         bool pre_fetch_cycle = self->dots >= 321 && self->dots <= 336; // fetch first 2 tiles of the next line

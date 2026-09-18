@@ -7,6 +7,9 @@
 typedef struct mapper Mapper;
 
 struct mapper {
+    // Optional direct 1 KiB CHR read pages. Refresh on mapping changes.
+    // PPU bus notifications and all writes still go through mapper callbacks.
+    const u8* chr_pages[8];
     void (*init)(Mapper* self, Cart* cart);
     void (*reset)(Mapper* self);
     void (*write)(Mapper* self, u16 addr, u8 value);

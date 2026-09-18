@@ -1,3 +1,9 @@
+#ifdef NESC_COMPONENT_PROFILE
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
+#endif
+
 #include "nes.h"
 #include "nrom.h"
 #include "mmc1.h"

@@ -3,6 +3,10 @@
 void nrom_init(Mapper* self, Cart* cart) {
     Mapper_NROM* nrom = (Mapper_NROM*)self;
     nrom->cart = cart;
+    for (usize page = 0; page < 8; page++) {
+        self->chr_pages[page] = cart->chr_size >= (page + 1) * 0x400
+            ? cart->chr_rom + page * 0x400 : NULL;
+    }
     memset(nrom->prg_ram, 0, sizeof(nrom->prg_ram));
 }
 
@@ -42,6 +46,7 @@ u8 nrom_read(Mapper* self, u16 addr) {
 }
 
 void mapper_nrom_init(Mapper_NROM* mapper) {
+    memset(mapper->base.chr_pages, 0, sizeof(mapper->base.chr_pages));
     mapper->base.init = nrom_init;
     mapper->base.reset = nrom_reset;
     mapper->base.write = nrom_write;

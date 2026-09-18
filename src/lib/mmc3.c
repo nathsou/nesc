@@ -66,6 +66,16 @@ static usize mmc3_chr_bank_for_addr(const Mapper_MMC3* mmc3, u16 addr) {
     return bank;
 }
 
+static void mmc3_refresh_chr(Mapper_MMC3* mmc3) {
+    u8* data = mmc3->cart->chr_size == 0 ? mmc3->chr_ram : mmc3->cart->chr_rom;
+    for (usize page = 0; page < 8; page++) {
+        u16 addr = (u16)(page * 0x400);
+        usize bank = mmc3_chr_bank_for_addr(mmc3, addr);
+        mmc3->base.chr_pages[page] = mmc3_chr_bank_count(mmc3) != 0
+            ? data + mmc3_chr_offset(mmc3, bank, addr) : NULL;
+    }
+}
+
 static void mmc3_reset(Mapper* self) {
     Mapper_MMC3* mmc3 = (Mapper_MMC3*)self;
     memset(mmc3->bank_registers, 0, sizeof(mmc3->bank_registers));
@@ -83,6 +93,7 @@ static void mmc3_reset(Mapper* self) {
     mmc3->irq_pending = false;
     mmc3->a12_high = false;
     mmc3->a12_low_cycles = 0;
+    mmc3_refresh_chr(mmc3);
 }
 
 static void mmc3_init(Mapper* self, Cart* cart) {
@@ -163,9 +174,11 @@ static void mmc3_write(Mapper* self, u16 addr, u8 value) {
             mmc3->bank_select = value & 7;
             mmc3->prg_mode = (value & 0x40) != 0;
             mmc3->chr_inversion = (value & 0x80) != 0;
+            mmc3_refresh_chr(mmc3);
             break;
         case 0x8001:
             mmc3->bank_registers[mmc3->bank_select] = value;
+            if (mmc3->bank_select < 6) mmc3_refresh_chr(mmc3);
             break;
         case 0xa000:
             if (mmc3->cart->header.mirroring != NT_MIRRORING_FOUR_SCREEN) {
@@ -217,6 +230,7 @@ static u8 mmc3_read(Mapper* self, u16 addr) {
 }
 
 void mapper_mmc3_init(Mapper_MMC3* mapper) {
+    memset(mapper->base.chr_pages, 0, sizeof(mapper->base.chr_pages));
     mapper->base.init = mmc3_init;
     mapper->base.reset = mmc3_reset;
     mapper->base.write = mmc3_write;

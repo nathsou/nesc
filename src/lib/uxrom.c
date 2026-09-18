@@ -17,6 +17,12 @@ static usize uxrom_prg_offset(const Mapper_UXROM* uxrom, usize bank, u16 addr) {
 static void uxrom_reset(Mapper* self) {
     Mapper_UXROM* uxrom = (Mapper_UXROM*)self;
     uxrom->prg_bank = 0;
+    for (usize page = 0; page < 8; page++) {
+        self->chr_pages[page] = uxrom->cart->chr_size == 0
+            ? uxrom->chr_ram + page * 0x400
+            : (uxrom->cart->chr_size % 0x400 == 0
+                ? uxrom->cart->chr_rom + (page * 0x400) % uxrom->cart->chr_size : NULL);
+    }
     memset(uxrom->prg_ram, 0, sizeof(uxrom->prg_ram));
     memset(uxrom->chr_ram, 0, sizeof(uxrom->chr_ram));
 }
@@ -68,6 +74,7 @@ static u8 uxrom_read(Mapper* self, u16 addr) {
 }
 
 void mapper_uxrom_init(Mapper_UXROM* mapper) {
+    memset(mapper->base.chr_pages, 0, sizeof(mapper->base.chr_pages));
     mapper->base.init = uxrom_init;
     mapper->base.reset = uxrom_reset;
     mapper->base.write = uxrom_write;
