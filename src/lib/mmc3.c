@@ -144,6 +144,14 @@ static void mmc3_ppu_tick(Mapper* self) {
     }
 }
 
+static void mmc3_ppu_advance(Mapper* self, usize cycles) {
+    Mapper_MMC3* mmc3 = (Mapper_MMC3*)self;
+    if (!mmc3->a12_high && mmc3->a12_low_cycles < MMC3_A12_LOW_FILTER_CYCLES) {
+        usize remaining = MMC3_A12_LOW_FILTER_CYCLES - mmc3->a12_low_cycles;
+        mmc3->a12_low_cycles += cycles < remaining ? cycles : remaining;
+    }
+}
+
 static bool mmc3_is_asserting_irq(Mapper* self) {
     return ((Mapper_MMC3*)self)->irq_pending;
 }
@@ -238,6 +246,7 @@ void mapper_mmc3_init(Mapper_MMC3* mapper) {
     mapper->base.read = mmc3_read;
     mapper->base.ppu_address = mmc3_ppu_address;
     mapper->base.ppu_tick = mmc3_ppu_tick;
+    mapper->base.ppu_advance = mmc3_ppu_advance;
     mapper->base.is_asserting_irq = mmc3_is_asserting_irq;
     mapper->base.free = mmc3_free;
 }

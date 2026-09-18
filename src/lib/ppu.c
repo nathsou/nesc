@@ -572,6 +572,17 @@ static inline void ppu_tick(PPU* self, bool rendering_enabled) {
     }
 }
 
+static inline void ppu_advance_idle(PPU* self, usize cycles) {
+    self->total_cycles += cycles;
+    mapper_ppu_advance(self->mapper, cycles);
+    if (self->should_trigger_nmi && (self->ctrl_reg & PPU_CTRL_NMI_ENABLE)
+        && (self->status_reg & PPU_STATUS_VBLANK)) {
+        self->should_trigger_nmi = false;
+        self->nmi_triggered = true;
+    }
+    self->dots += cycles;
+}
+
 static inline void ppu_fetch_background_dot(PPU* self) {
     self->background_pixels <<= 4;
 
@@ -662,6 +673,17 @@ bool ppu_step(PPU* self, usize cycles) {
     bool show_background = self->mask_reg & PPU_MASK_SHOW_BACKGROUND;
     bool show_sprites = self->mask_reg & PPU_MASK_SHOW_SPRITES;
     bool rendering_enabled = show_background || show_sprites;
+
+    bool inactive_line = self->scanlines >= 240 && self->scanlines < 261;
+    bool status_event_next = (self->scanlines == 241 || self->scanlines == 261)
+        && self->dots == 0;
+    if (cycles > 0 && (inactive_line || !rendering_enabled)
+        && !status_event_next && self->dots < 340) {
+        usize span = 340 - self->dots;
+        usize advance = cycles < span ? cycles : span;
+        ppu_advance_idle(self, advance);
+        cycles -= advance;
+    }
 
     for (usize i = 0; i < cycles; i++) {
         ppu_tick(self, rendering_enabled);

@@ -82,6 +82,7 @@ void mapper_uxrom_init(Mapper_UXROM* mapper) {
     mapper->base.read = uxrom_read;
     mapper->base.ppu_address = NULL;
     mapper->base.ppu_tick = NULL;
+    mapper->base.ppu_advance = NULL;
     mapper->base.is_asserting_irq = NULL;
     mapper->base.free = uxrom_free;
 }

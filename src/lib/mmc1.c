@@ -181,6 +181,7 @@ void mapper_mmc1_init(Mapper_MMC1 *mapper) {
     mapper->base.read = mmc1_read;
     mapper->base.ppu_address = NULL;
     mapper->base.ppu_tick = NULL;
+    mapper->base.ppu_advance = NULL;
     mapper->base.is_asserting_irq = NULL;
     mapper->base.free = mmc1_free;
 }
