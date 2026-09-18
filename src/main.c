@@ -4,6 +4,7 @@
 #include <string.h>
 #include <math.h>
 #include "lib/nes.h"
+#include "lib/input_trace.h"
 #include "frame_pacing.h"
 
 #define SCALE_FACTOR 3
@@ -47,7 +48,16 @@ u8 read_controller1_state(void) {
     return state;
 }
 
-static void step_frame_with_input(NES* nes, u8 state) {
+static void step_frame_with_input(NES* nes, u8 state, InputTraceWriter* writer, bool* recording) {
+    if (*recording) {
+        char error[256];
+        if (!input_trace_writer_write_frame(writer, state, error, sizeof(error))) {
+            fprintf(stderr, "Input recording stopped: %s\n", error);
+            input_trace_writer_close(writer, NULL, 0);
+            *recording = false;
+        }
+    }
+
     cpu_update_controller1(&nes->cpu, state);
     nes_step_frame(nes);
 }
@@ -61,24 +71,31 @@ void audio_input_callback(void* output_buffer, unsigned int frames) {
 
 int main(int argc, char* argv[]) {
     const char* rom_path = NULL;
+    const char* trace_path = NULL;
     bool pacing_stats = false;
 
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--pacing-stats") == 0) {
+        if (strcmp(argv[i], "--record") == 0) {
+            if (trace_path != NULL || i + 1 >= argc) {
+                fprintf(stderr, "Usage: %s [--record <trace_path>] [--pacing-stats] <rom_path>\n", argv[0]);
+                return 1;
+            }
+            trace_path = argv[++i];
+        } else if (strcmp(argv[i], "--pacing-stats") == 0) {
             pacing_stats = true;
         } else if (strcmp(argv[i], "--help") == 0) {
-            printf("Usage: %s [--pacing-stats] <rom_path>\n", argv[0]);
+            printf("Usage: %s [--record <trace_path>] [--pacing-stats] <rom_path>\n", argv[0]);
             return 0;
         } else if (rom_path == NULL) {
             rom_path = argv[i];
         } else {
-            fprintf(stderr, "Usage: %s [--pacing-stats] <rom_path>\n", argv[0]);
+            fprintf(stderr, "Usage: %s [--record <trace_path>] [--pacing-stats] <rom_path>\n", argv[0]);
             return 1;
         }
     }
 
     if (rom_path == NULL) {
-        fprintf(stderr, "Usage: %s [--pacing-stats] <rom_path>\n", argv[0]);
+        fprintf(stderr, "Usage: %s [--record <trace_path>] [--pacing-stats] <rom_path>\n", argv[0]);
         return 1;
     }
 
@@ -88,6 +105,18 @@ int main(int argc, char* argv[]) {
     if (!nes_init_res.ok) {
         fprintf(stderr, "Error: %s\n", nes_init_res.error);
         return 1;
+    }
+
+    InputTraceWriter trace_writer = {0};
+    bool recording = false;
+    if (trace_path != NULL) {
+        char error[256];
+        if (!input_trace_writer_open(&trace_writer, trace_path, error, sizeof(error))) {
+            fprintf(stderr, "Could not start input recording: %s\n", error);
+            nes_free(&nes);
+            return 1;
+        }
+        recording = true;
     }
 
     apu_instance = &nes.apu;
@@ -104,8 +133,9 @@ int main(int argc, char* argv[]) {
     SetAudioStreamCallback(stream, audio_input_callback);
 
     while (apu_buffered_samples(&nes.apu) < AUDIO_BUFFER_TARGET) {
-        // Prime audio with neutral input before starting playback.
-        step_frame_with_input(&nes, 0);
+        // Capture startup audio priming as neutral input frames so replay
+        // begins from the same emulator state as the recorded session.
+        step_frame_with_input(&nes, 0, &trace_writer, &recording);
     }
 
     Image image = {
@@ -152,7 +182,7 @@ int main(int argc, char* argv[]) {
         u8 input_state = read_controller1_state();
         unsigned int frames = frame_pacing_advance(&pacing, now);
         for (unsigned int frame = 0; frame < frames; frame++) {
-            step_frame_with_input(&nes, input_state);
+            step_frame_with_input(&nes, input_state, &trace_writer, &recording);
         }
         emulated_frames += frames;
         repeats += frames == 0;
@@ -197,6 +227,15 @@ int main(int argc, char* argv[]) {
     UnloadTexture(texture);
     CloseAudioDevice();
     CloseWindow();
+
+    if (recording) {
+        char error[256];
+        if (input_trace_writer_close(&trace_writer, error, sizeof(error))) {
+            fprintf(stderr, "Recorded %zu emulated frames to %s\n", trace_writer.frame_count, trace_path);
+        } else {
+            fprintf(stderr, "Could not finish input recording: %s\n", error);
+        }
+    }
 
     nes_free(&nes);
     apu_instance = NULL;

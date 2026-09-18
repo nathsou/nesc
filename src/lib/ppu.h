@@ -40,6 +40,11 @@ typedef struct {
 } SpriteData;
 
 typedef struct {
+    u8 palette_index; // 0 means transparent; sprite palette RAM indices are nonzero
+    u8 flags;
+} SpriteLinePixel;
+
+typedef struct {
     usize scanlines;
     usize dots;
     usize frame_count;
@@ -73,6 +78,7 @@ typedef struct {
     bool attribute_data_latches[2];
     u8 attribute_data_shift_registers[2];
     SpriteData scanline_sprites[8];
+    SpriteLinePixel sprite_line[SCREEN_WIDTH];
     u8 visible_scanline_sprites;
 } PPU;
 

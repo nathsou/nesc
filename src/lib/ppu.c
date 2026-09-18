@@ -5,6 +5,8 @@
 #define BYTES_PER_PALETTE 4
 #define TILES_PER_ROW 32
 #define TILES_PER_COLUMN 30
+#define SPRITE_LINE_BEHIND_BACKGROUND 0x01
+#define SPRITE_LINE_SPRITE_ZERO 0x02
 
 static inline void ppu_notify_bus_address(PPU* self, u16 addr);
 
@@ -73,6 +75,7 @@ void ppu_init(PPU* self, Cart *cart, Mapper* mapper) {
     self->attribute_data_latches[1] = false;
     self->attribute_data_shift_registers[0] = 0;
     self->attribute_data_shift_registers[1] = 0;
+    memset(self->sprite_line, 0, sizeof(self->sprite_line));
     self->visible_scanline_sprites = 0;
     ppu_clear_frame(self);
     ppu_reset(self);
@@ -417,7 +420,7 @@ BackgroundPixelData ppu_get_background_pixel(PPU* self) {
 
 typedef struct {
     u8 palette_color;
-    u8 tile_index;
+    bool is_sprite_zero;
     bool behind_background;
     bool is_opaque;
 } SpritePixelData;
@@ -426,22 +429,15 @@ SpritePixelData ppu_get_sprite_pixel(PPU* self) {
     SpritePixelData pixel_data = {0};
     u16 x = (u16)(self->dots - 1);
 
-    if ((self->mask_reg & PPU_MASK_SHOW_SPRITES) && ((self->mask_reg & PPU_MASK_SHOW_SPRITES_LEFTMOST) || x > 7)) {
-        for (usize i = 0; i < self->visible_scanline_sprites; i++) {
-            SpriteData* s = &self->scanline_sprites[i];
-
-            if (x >= s->x && x < s->x + 8) {
-                u8 color_index = s->chr[x - s->x];
-
-                if (color_index != 0) {
-                    pixel_data.is_opaque = true;
-                    usize palette_index = SPRITES_PALETTES_OFFSET + s->palette_index * BYTES_PER_PALETTE + color_index - 1;
-                    pixel_data.palette_color = self->palette_table[palette_index] & 63;
-                    pixel_data.tile_index = s->tile_index;
-                    pixel_data.behind_background = s->behind_background;
-                    break;
-                }
-            }
+    if ((self->mask_reg & PPU_MASK_SHOW_SPRITES) &&
+        ((self->mask_reg & PPU_MASK_SHOW_SPRITES_LEFTMOST) || x > 7) &&
+        self->visible_scanline_sprites > 0) {
+        SpriteLinePixel* cached_pixel = &self->sprite_line[x];
+        if (cached_pixel->palette_index != 0) {
+            pixel_data.is_opaque = true;
+            pixel_data.palette_color = self->palette_table[cached_pixel->palette_index] & 63;
+            pixel_data.is_sprite_zero = (cached_pixel->flags & SPRITE_LINE_SPRITE_ZERO) != 0;
+            pixel_data.behind_background = (cached_pixel->flags & SPRITE_LINE_BEHIND_BACKGROUND) != 0;
         }
     }
 
@@ -467,7 +463,7 @@ void ppu_render_pixel(PPU* self) {
     ppu_set_pixel(self, x, y, palette_color);
 
     // Sprite 0 hit detection
-    if (sprite.tile_index == 0 && sprite.is_opaque && bg.is_opaque && x < 255 && !(self->status_reg & PPU_STATUS_SPRITE0_HIT)) {
+    if (sprite.is_sprite_zero && sprite.is_opaque && bg.is_opaque && x < 255 && !(self->status_reg & PPU_STATUS_SPRITE0_HIT)) {
         self->status_reg |= PPU_STATUS_SPRITE0_HIT;
     }
 }
@@ -550,6 +546,29 @@ void ppu_fetch_next_scanline_sprites(PPU* self) {
     }
 
     self->visible_scanline_sprites = count;
+
+    memset(self->sprite_line, 0, sizeof(self->sprite_line));
+    for (usize i = 0; i < count; i++) {
+        SpriteData* sprite = &self->scanline_sprites[i];
+
+        for (usize pixel = 0; pixel < 8; pixel++) {
+            usize x = (usize)sprite->x + pixel;
+            u8 color_index = sprite->chr[pixel];
+
+            if (x >= SCREEN_WIDTH || color_index == 0 || self->sprite_line[x].palette_index != 0) {
+                continue;
+            }
+
+            self->sprite_line[x].palette_index = (u8)(SPRITES_PALETTES_OFFSET +
+                sprite->palette_index * BYTES_PER_PALETTE + color_index - 1);
+            if (sprite->behind_background) {
+                self->sprite_line[x].flags |= SPRITE_LINE_BEHIND_BACKGROUND;
+            }
+            if (sprite->tile_index == 0) {
+                self->sprite_line[x].flags |= SPRITE_LINE_SPRITE_ZERO;
+            }
+        }
+    }
 }
 
 void ppu_tick(PPU* self) {
@@ -659,6 +678,7 @@ bool ppu_step(PPU* self, usize cycles) {
             } else {
                 // clear secondary OAM
                 self->visible_scanline_sprites = 0;
+                memset(self->sprite_line, 0, sizeof(self->sprite_line));
             }
         }
 
