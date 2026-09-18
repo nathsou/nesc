@@ -7,6 +7,10 @@ Measured on an Apple M2 with Apple clang 21.0.0, `-O3 -std=c11`, on 2026-09-18.
 1. Hoist rendering-mask decoding out of the PPU dot loop and reuse it in the tick helper. CPU writes cannot interleave dots within a `ppu_step` call. All dots, mapper ticks, delayed NMI checks, and frame transitions still execute.
 2. Replace nametable address range chains with bit masks. Mirroring mode is read from the cartridge on every access, so mapper-controlled mirroring changes remain immediate.
 3. Cache eight 1 KiB CHR read pointers per mapper. NROM and UxROM use fixed mappings; MMC1 and MMC3 refresh pointers when CHR mapping changes. CHR RAM pointers remain live, writes keep their mapper policy, and PPU address notifications still run before every cached read. Null pages fall back to the mapper read callback. MMC1 reset now initializes its previously uninitialized CHR bank registers before constructing pointers.
+4. Decode each fetched background tile row into eight packed 4-bit pixels through lookup tables. A single 64-bit shift register replaces four pattern/attribute shift registers and repeated per-pixel bit extraction.
+5. Store output as packed RGBA pixels with one aligned store per visible dot. The benchmark hashes only RGB channels, so its frame hashes remain comparable with the previous RGB24 buffer.
+6. Split visible, pre-render, and vblank processing into dedicated paths. Visible dots no longer evaluate all of the generic scanline and event predicates.
+7. Batch event-free spans during vblank and forced blanking. MMC3 advances its saturated A12-low filter by an elapsed cycle count while bus-address notifications remain cycle ordered.
 
 The PR also includes the previously uncommitted sprite scanline cache, input recorder, headless replay benchmark, and optional component sampler. Commit `bfb55f6` is the reproducible baseline containing those changes before the three optimizations above. `d45c88b` is main with only the frame pacing fix.
 
@@ -14,7 +18,7 @@ The PR also includes the previously uncommitted sprite scanline cache, input rec
 
 The original 14,995-frame recording at `/tmp/smb-inputs.nesct` was no longer present. These measurements use **6,000 neutral-input frames**, allowing the games' built-in demos to run. They are not measurements of the user's recorded gameplay.
 
-Each configuration runs one untimed warm-up and three timed replays from fresh NES instances. Times include CPU, PPU, and APU emulation, excluding ROM loading, video presentation, audio playback, and framebuffer verification. The headless audio buffer is not consumed. Results are medians of process CPU time, which excludes descheduling but remains sensitive to clock frequency, cache behavior, and workstation load. Separate builds contain each optimization in isolation; these percentages must not be added together.
+The original three optimizations below used one untimed warm-up and three timed replays. The later mature-emulator techniques use one warm-up and five timed replays, with each row built from the preceding commit. Times include CPU, PPU, and APU emulation, excluding ROM loading, video presentation, audio playback, and framebuffer verification. The headless audio buffer is not consumed. Results are medians of process CPU time, which excludes descheduling but remains sensitive to clock frequency, cache behavior, and workstation load.
 
 ### Super Mario Bros. (NROM)
 
@@ -38,9 +42,21 @@ The complete PR is only **1.3% lower CPU time than main** on this demo workload.
 
 This exercises a banked CHR ROM and MMC3's PPU address callbacks. It still shows a modest overall gain; these measurements do not establish a large PPU throughput improvement.
 
+### Mature-emulator techniques, sequential SMB results
+
+| Commit/configuration | Median CPU seconds | Frames/s | Change from previous | Change from starting point |
+| --- | ---: | ---: | ---: | ---: |
+| `0ec675c`, starting point | 6.455636 | 929.4 | — | — |
+| `c63a99c`, packed background pixels | 6.251834 | 959.7 | 3.2% faster | 3.2% faster |
+| `bdee7ab`, packed RGBA output | 6.181158 | 970.7 | 1.1% faster | 4.3% faster |
+| `3af6dd9`, phase-specialized execution | 5.465312 | 1097.8 | 11.6% faster | 15.3% faster |
+| `cab416f`, event-free span batching | 5.465795 | 1097.7 | statistically flat | 15.3% faster |
+
+These are sequential results, unlike the earlier isolated table. The phase-specialized loop produced the material improvement. Conservative span batching is limited by the current scheduler: CPU instructions synchronize the PPU after only a few CPU cycles, and only vblank or forced-blank spans can safely skip per-dot execution. A larger batching gain would require an event scheduler that runs the CPU and PPU to their next shared observable event.
+
 ## Component sample
 
-A separate instrumented SMB replay collected 2,116 samples: CPU 13.4%, PPU 72.0%, APU 14.6%, scheduler/other below 0.1%. These are approximate shares from one run; the requested 1 ms timer is subject to OS timer resolution. The PPU remains the dominant core cost after these changes. Instrumented times are excluded from the comparison tables.
+Before the later four techniques, an instrumented SMB replay collected 2,116 samples: CPU 13.4%, PPU 72.0%, APU 14.6%, scheduler/other below 0.1%. After them, three instrumented replays placed the PPU between 69.4% and 70.4%, CPU between 15.1% and 15.4%, and APU between 14.5% and 15.3%. These are approximate shares; the requested 1 ms timer is subject to OS timer resolution. Instrumented times are excluded from the comparison tables.
 
 ## Correctness checks
 
