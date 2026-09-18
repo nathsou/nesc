@@ -572,6 +572,90 @@ static inline void ppu_tick(PPU* self, bool rendering_enabled) {
     }
 }
 
+static inline void ppu_fetch_background_dot(PPU* self) {
+    self->background_pixels <<= 4;
+
+    switch (self->dots & 7) {
+        case 1: ppu_fetch_nametable_byte(self); break;
+        case 3: ppu_fetch_attribute_byte(self); break;
+        case 7: ppu_fetch_pattern_bytes(self); break;
+        case 0: ppu_store_tile_data(self); break;
+        default: break;
+    }
+}
+
+static inline void ppu_process_visible_dot(PPU* self, bool show_background,
+                                           bool show_sprites, bool rendering_enabled) {
+    usize dot = self->dots;
+
+    if (show_background) {
+        if (dot >= 1 && dot <= 256) {
+            ppu_render_pixel(self);
+            ppu_fetch_background_dot(self);
+            if ((dot & 7) == 0) {
+                ppu_scroll_increment_coarse_x(self);
+            }
+            if (dot == 256) {
+                ppu_scroll_increment_y(self);
+            }
+        } else if (dot >= 321 && dot <= 336) {
+            ppu_fetch_background_dot(self);
+            if ((dot & 7) == 0) {
+                ppu_scroll_increment_coarse_x(self);
+            }
+        } else if (dot == 257) {
+            ppu_scroll_copy_x(self);
+        }
+    }
+
+    if (show_sprites && dot == 257) {
+        ppu_fetch_next_scanline_sprites(self);
+    }
+
+    if (rendering_enabled && dot == 260) {
+        u16 sprite_pattern_table = self->ctrl_reg & PPU_CTRL_SPRITE_PATTERN_TABLE ? 0x1000 : 0;
+        ppu_notify_bus_address(self, sprite_pattern_table);
+    }
+}
+
+static inline void ppu_process_prerender_dot(PPU* self, bool show_background,
+                                             bool show_sprites, bool rendering_enabled) {
+    usize dot = self->dots;
+    bool fetch_dot = (dot >= 1 && dot <= 256) || (dot >= 321 && dot <= 336);
+
+    if (show_background) {
+        if (fetch_dot) {
+            ppu_fetch_background_dot(self);
+        }
+        if (dot >= 280 && dot <= 304) {
+            ppu_scroll_copy_y(self);
+        }
+        if (fetch_dot && (dot & 7) == 0) {
+            ppu_scroll_increment_coarse_x(self);
+        }
+        if (dot == 256) {
+            ppu_scroll_increment_y(self);
+        } else if (dot == 257) {
+            ppu_scroll_copy_x(self);
+        }
+    }
+
+    if (show_sprites && dot == 257) {
+        self->visible_scanline_sprites = 0;
+        memset(self->sprite_line, 0, sizeof(self->sprite_line));
+    }
+
+    if (rendering_enabled && dot == 260) {
+        u16 sprite_pattern_table = self->ctrl_reg & PPU_CTRL_SPRITE_PATTERN_TABLE ? 0x1000 : 0;
+        ppu_notify_bus_address(self, sprite_pattern_table);
+    }
+
+    if (dot == 1) {
+        self->status_reg &= ~(PPU_STATUS_VBLANK | PPU_STATUS_SPRITE0_HIT | PPU_STATUS_SPRITE_OVERFLOW);
+        ppu_detect_nmi_edge(self);
+    }
+}
+
 bool ppu_step(PPU* self, usize cycles) {
     bool new_frame = false;
     // CPU register writes cannot interleave the dots in this call.
@@ -582,89 +666,15 @@ bool ppu_step(PPU* self, usize cycles) {
     for (usize i = 0; i < cycles; i++) {
         ppu_tick(self, rendering_enabled);
 
-        bool pre_render_line = self->scanlines == 261;
-        bool visible_line = self->scanlines < 240;
-        bool pre_fetch_cycle = self->dots >= 321 && self->dots <= 336; // fetch first 2 tiles of the next line
-        bool visible_cycle = self->dots >= 1 && self->dots <= 256;
-        bool fetch_cycle = pre_fetch_cycle || visible_cycle;
-        bool render_line = pre_render_line || visible_line;
-
-        if (show_background) {
-            if (visible_cycle && visible_line) {
-                ppu_render_pixel(self);
-            }
-
-            if (render_line && fetch_cycle) {
-                self->background_pixels <<= 4;
-
-                switch (self->dots & 7) {
-                    case 1: {
-                        ppu_fetch_nametable_byte(self);
-                        break;
-                    }
-                    case 3: {
-                        ppu_fetch_attribute_byte(self);
-                        break;
-                    }
-                    case 7: {
-                        ppu_fetch_pattern_bytes(self);
-                        break;
-                    }
-                    case 0: {
-                        ppu_store_tile_data(self);
-                        break;
-                    }
-                    default: {
-                        break;
-                    }
-                }
-            }
-
-            if (pre_render_line && self->dots >= 280 && self->dots <= 304) {
-                ppu_scroll_copy_y(self);
-            }
-
-            if (render_line) {
-                if (fetch_cycle && (self->dots & 7) == 0) {
-                    ppu_scroll_increment_coarse_x(self);
-                }
-
-                if (self->dots == 256) {
-                    ppu_scroll_increment_y(self);
-                } else if (self->dots == 257) {
-                    ppu_scroll_copy_x(self);
-                }
-            }
-        }
-
-
-        if (show_sprites && self->dots == 257) {
-            if (visible_line) {
-                ppu_fetch_next_scanline_sprites(self);
-            } else {
-                // clear secondary OAM
-                self->visible_scanline_sprites = 0;
-                memset(self->sprite_line, 0, sizeof(self->sprite_line));
-            }
-        }
-
-        // Sprite fetch slots occur even when no sprite is visible. This
-        // preserves the A12 transition MMC3 normally observes per scanline.
-        if (rendering_enabled && render_line && self->dots == 260) {
-            u16 sprite_pattern_table = self->ctrl_reg & PPU_CTRL_SPRITE_PATTERN_TABLE ? 0x1000 : 0;
-            ppu_notify_bus_address(self, sprite_pattern_table);
-        }
-
-        if (self->dots == 1) {
-            if (self->scanlines == 241) {
-                new_frame = true;
-                self->frame_count++;
-                self->status_reg |= PPU_STATUS_VBLANK;
-                ppu_detect_nmi_edge(self);
-            } else if (pre_render_line) {
-                self->status_reg &= ~(PPU_STATUS_VBLANK | PPU_STATUS_SPRITE0_HIT | PPU_STATUS_SPRITE_OVERFLOW);
-                ppu_detect_nmi_edge(self);
-            }
+        if (self->scanlines < 240) {
+            ppu_process_visible_dot(self, show_background, show_sprites, rendering_enabled);
+        } else if (self->scanlines == 261) {
+            ppu_process_prerender_dot(self, show_background, show_sprites, rendering_enabled);
+        } else if (self->scanlines == 241 && self->dots == 1) {
+            new_frame = true;
+            self->frame_count++;
+            self->status_reg |= PPU_STATUS_VBLANK;
+            ppu_detect_nmi_edge(self);
         }
     }
 
