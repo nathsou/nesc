@@ -37,9 +37,12 @@ static bool process_cpu_seconds(double* seconds) {
 static u64 framebuffer_hash(const PPU* ppu) {
     u64 hash = UINT64_C(14695981039346656037);
 
-    for (usize i = 0; i < sizeof(ppu->frame); i++) {
-        hash ^= ppu->frame[i];
-        hash *= UINT64_C(1099511628211);
+    for (usize i = 0; i < SCREEN_WIDTH * SCREEN_HEIGHT; i++) {
+        u32 pixel = ppu->frame[i];
+        for (usize component = 0; component < 3; component++) {
+            hash ^= (pixel >> (component * 8)) & 0xff;
+            hash *= UINT64_C(1099511628211);
+        }
     }
 
     return hash;

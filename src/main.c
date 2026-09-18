@@ -142,7 +142,7 @@ int main(int argc, char* argv[]) {
         .data = nes.ppu.frame,
         .width = SCREEN_WIDTH,
         .height = SCREEN_HEIGHT,
-        .format = PIXELFORMAT_UNCOMPRESSED_R8G8B8,
+        .format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8,
         .mipmaps = 1,
     };
 

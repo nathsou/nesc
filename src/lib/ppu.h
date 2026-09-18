@@ -9,6 +9,7 @@
 
 #define SCREEN_WIDTH 256
 #define SCREEN_HEIGHT 240
+#define PPU_FRAME_RGBA 1
 
 #define PPU_CTRL_NMI_ENABLE 128
 #define PPU_CTRL_SPRITE_SIZE 32
@@ -64,7 +65,7 @@ typedef struct {
     u16 t_reg;
     u8 x_reg; // fine X scroll
     u8 data_buffer; // internal buffer for data reads
-    u8 frame[SCREEN_WIDTH * SCREEN_HEIGHT * 3]; // 3 bytes per pixel (RGB)
+    u32 frame[SCREEN_WIDTH * SCREEN_HEIGHT];
     bool write_toggle; // w
     u8 oam_dma;
     bool nmi_triggered;

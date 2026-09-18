@@ -275,18 +275,11 @@ void ppu_write(PPU* self, u16 addr, u8 value) {
 }
 
 void ppu_set_pixel(PPU* self, usize x, usize y, u8 palette_color) {
-    usize index = (y * SCREEN_WIDTH + x) * 3;
-
-    if (index < SCREEN_WIDTH * SCREEN_HEIGHT * 3) {
-        usize offset = palette_color * 3;
-        u8 r = COLOR_PALETTE[offset];
-        u8 g = COLOR_PALETTE[offset + 1];
-        u8 b = COLOR_PALETTE[offset + 2];
-
-        self->frame[index] = r;
-        self->frame[index + 1] = g;
-        self->frame[index + 2] = b;
-    }
+    usize offset = palette_color * 3;
+    self->frame[y * SCREEN_WIDTH + x] = COLOR_PALETTE[offset]
+        | ((u32)COLOR_PALETTE[offset + 1] << 8)
+        | ((u32)COLOR_PALETTE[offset + 2] << 16)
+        | UINT32_C(0xff000000);
 }
 
 void ppu_scroll_increment_coarse_x(PPU* self) {
